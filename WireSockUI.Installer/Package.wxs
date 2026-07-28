@@ -36,7 +36,7 @@
           Key="SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full"
           Name="Release"
           Type="raw"
-          Bitness="always64" />
+          Bitness="always32" />
     </Property>
     <Launch
         Condition="Installed OR VersionNT &gt;= 1000"

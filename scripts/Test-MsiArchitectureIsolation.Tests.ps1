@@ -262,6 +262,10 @@ function Assert-PackageValidatorRejects {
         [string]$Description,
         [string]$Package,
         [string]$ValidationMetadataPath,
+        [ValidateSet('x86', 'x64', 'arm64')]
+        [string]$ExpectedArchitecture,
+        [ValidateSet('no-uwp', 'uwp')]
+        [string]$ExpectedFlavor,
         [string]$ExpectedVersion,
         [string]$ExpectedMessage
     )
@@ -270,9 +274,9 @@ function Assert-PackageValidatorRejects {
         & $packageValidator `
             -MsiPath $Package `
             -ValidationMetadataPath $ValidationMetadataPath `
-            -ExpectedArchitecture 'x64' `
+            -ExpectedArchitecture $ExpectedArchitecture `
             -ExpectedVersion $ExpectedVersion `
-            -ExpectedFlavor 'no-uwp' `
+            -ExpectedFlavor $ExpectedFlavor `
             -AllowUnsignedPayload |
             Out-Null
     }
@@ -417,6 +421,39 @@ try {
     }
     $x64NoUwpVersion = [string]$Matches.version
 
+    $x86NoUwpMatches = @(
+        $resolvedMsiPaths |
+            Where-Object {
+                [IO.Path]::GetFileName($_) -cmatch
+                    '^WireSockUI-[0-9]+\.[0-9]+\.[0-9]+-win-x86-no-uwp\.msi$'
+            }
+    )
+    if ($x86NoUwpMatches.Count -ne 1) {
+        throw 'The test requires exactly one canonically named x86/no-uwp MSI.'
+    }
+    $x86NoUwpPath = $x86NoUwpMatches[0]
+    $x86NoUwpName = [IO.Path]::GetFileName($x86NoUwpPath)
+    if ($x86NoUwpName -cnotmatch
+        '^WireSockUI-(?<version>[0-9]+\.[0-9]+\.[0-9]+)-win-x86-no-uwp\.msi$') {
+        throw 'The x86/no-uwp fixture MSI does not have a canonical versioned name.'
+    }
+    $x86NoUwpVersion = [string]$Matches.version
+
+    $always64FrameworkSearchMsi = Invoke-MsiUpdate `
+        -SourcePath $x86NoUwpPath `
+        -Name 'always64-framework-search' `
+        -Sql (
+            'UPDATE `RegLocator` SET `Type` = 18 WHERE `Signature_` = ' +
+            '''NetFramework472ReleaseSearch''')
+    Assert-PackageValidatorRejects `
+        -Description 'An x86 package with a 64-bit .NET Framework registry locator' `
+        -Package $always64FrameworkSearchMsi `
+        -ValidationMetadataPath ($x86NoUwpPath + '.validation.json') `
+        -ExpectedArchitecture 'x86' `
+        -ExpectedFlavor 'no-uwp' `
+        -ExpectedVersion $x86NoUwpVersion `
+        -ExpectedMessage 'documented 32-bit .NET Framework release key'
+
     $keyPathDriftMsi = Invoke-MsiUpdate `
         -SourcePath $x64NoUwpPath `
         -Name 'key-path-drift' `
@@ -462,6 +499,8 @@ try {
         -Description 'A standalone unversioned manifest-bound runtime file' `
         -Package $standaloneUnversionedMsi `
         -ValidationMetadataPath ($x64NoUwpPath + '.validation.json') `
+        -ExpectedArchitecture 'x64' `
+        -ExpectedFlavor 'no-uwp' `
         -ExpectedVersion $x64NoUwpVersion `
         -ExpectedMessage 'standalone and unversioned'
 

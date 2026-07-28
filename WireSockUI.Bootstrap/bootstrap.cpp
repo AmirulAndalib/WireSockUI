@@ -27,6 +27,11 @@ namespace
     constexpr wchar_t RuntimeVersion[] = L"v4.0.30319";
     constexpr wchar_t ManagedTypeName[] = L"WireSockUI.Program";
     constexpr wchar_t ManagedMethodName[] = L"HostedMain";
+    constexpr wchar_t NativeHostSelfTestCommandLine[] =
+        L"--native-host-self-test \"argument with spaces\"";
+    constexpr wchar_t ManagedNativeHostSelfTestToken[] =
+        L"WireSockUI.NativeHostSelfTest.v1";
+    constexpr int PayloadValidationFailureExitCode = 40;
     constexpr size_t Sha256Length = 32;
     constexpr size_t MaximumManifestEntries = 4096;
     constexpr size_t MaximumPayloadDepth = 32;
@@ -308,8 +313,61 @@ namespace
         return WindowsErrorMessage(static_cast<DWORD>(result));
     }
 
-    void ShowStartupError(const std::wstring& diagnostic)
+    void WriteNativeHostSelfTestDiagnostic(const std::wstring& diagnostic)
     {
+        const HANDLE standardError = GetStdHandle(STD_ERROR_HANDLE);
+        if (standardError == nullptr || standardError == INVALID_HANDLE_VALUE)
+            return;
+
+        constexpr char prefix[] = "WireSockUI native self-test: ";
+        constexpr char newline[] = "\r\n";
+        DWORD written = 0;
+        WriteFile(
+            standardError,
+            prefix,
+            static_cast<DWORD>(sizeof(prefix) - 1),
+            &written,
+            nullptr);
+
+        constexpr size_t maximumDiagnosticCharacters = 2048;
+        const size_t characterCount =
+            (std::min)(diagnostic.size(), maximumDiagnosticCharacters);
+        std::array<char, maximumDiagnosticCharacters * 4> utf8 = {};
+        const int byteCount = WideCharToMultiByte(
+            CP_UTF8,
+            WC_ERR_INVALID_CHARS,
+            diagnostic.data(),
+            static_cast<int>(characterCount),
+            utf8.data(),
+            static_cast<int>(utf8.size()),
+            nullptr,
+            nullptr);
+        if (byteCount > 0)
+        {
+            WriteFile(
+                standardError,
+                utf8.data(),
+                static_cast<DWORD>(byteCount),
+                &written,
+                nullptr);
+        }
+        WriteFile(
+            standardError,
+            newline,
+            static_cast<DWORD>(sizeof(newline) - 1),
+            &written,
+            nullptr);
+    }
+
+    void ShowStartupError(
+        const std::wstring& diagnostic,
+        bool nativeHostSelfTestRequested)
+    {
+        if (nativeHostSelfTestRequested)
+        {
+            WriteNativeHostSelfTestDiagnostic(diagnostic);
+            return;
+        }
 #ifdef WIRESOCKUI_DEVELOPMENT_BUILD
         wchar_t suppressUi[2] = {};
         if (GetEnvironmentVariableW(
@@ -350,6 +408,22 @@ namespace
     bool EqualsIgnoreCase(const std::wstring& left, const wchar_t* right)
     {
         return _wcsicmp(left.c_str(), right) == 0;
+    }
+
+    bool IsNativeHostSelfTestCommandLine(const wchar_t* commandLine)
+    {
+        if (commandLine == nullptr)
+            return false;
+
+        const std::wstring value(commandLine);
+        const size_t first = value.find_first_not_of(L" \t");
+        if (first == std::wstring::npos)
+            return false;
+        const size_t last = value.find_last_not_of(L" \t");
+        return value.compare(
+                   first,
+                   last - first + 1,
+                   NativeHostSelfTestCommandLine) == 0;
     }
 
     std::wstring ParentPath(const std::wstring& path)
@@ -1617,6 +1691,7 @@ namespace
 
     bool ExecuteManagedApplication(
         const std::wstring& applicationDirectory,
+        const std::wstring& managedArgument,
         DWORD& exitCode,
         std::wstring& diagnostic)
     {
@@ -1722,7 +1797,7 @@ namespace
             managedAssemblyPath.c_str(),
             ManagedTypeName,
             ManagedMethodName,
-            L"",
+            managedArgument.c_str(),
             &exitCode);
         if (FAILED(result))
         {
@@ -1735,31 +1810,40 @@ namespace
     }
 }
 
-int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
+int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR commandLine, int)
 {
+    bool nativeHostSelfTestRequested = false;
     try
     {
+        nativeHostSelfTestRequested =
+            IsNativeHostSelfTestCommandLine(commandLine);
+        const std::wstring managedArgument =
+            nativeHostSelfTestRequested
+                ? ManagedNativeHostSelfTestToken
+                : L"";
         if (SetDefaultDllDirectories(
                 LOAD_LIBRARY_SEARCH_SYSTEM32 | LOAD_LIBRARY_SEARCH_USER_DIRS) ==
             FALSE)
         {
             ShowStartupError(
                 L"Unable to restrict the process DLL search path: " +
-                WindowsErrorMessage(GetLastError()));
+                    WindowsErrorMessage(GetLastError()),
+                nativeHostSelfTestRequested);
             return 1;
         }
         if (!IsCurrentProcessAdministrator())
         {
             ShowStartupError(
                 L"The native WireSock UI launcher is not running with an "
-                L"administrator token.");
+                L"administrator token.",
+                nativeHostSelfTestRequested);
             return 1;
         }
 
         std::wstring diagnostic;
         if (!HasRequiredNetFramework(diagnostic))
         {
-            ShowStartupError(diagnostic);
+            ShowStartupError(diagnostic, nativeHostSelfTestRequested);
             return 1;
         }
 
@@ -1771,7 +1855,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         if (moduleLength == 0 ||
             static_cast<size_t>(moduleLength) >= moduleBuffer.size())
         {
-            ShowStartupError(L"Unable to resolve the WireSock UI launcher path.");
+            ShowStartupError(
+                L"Unable to resolve the WireSock UI launcher path.",
+                nativeHostSelfTestRequested);
             return 1;
         }
 
@@ -1779,15 +1865,19 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         const std::wstring applicationDirectory = ParentPath(launcherPath);
         if (applicationDirectory.empty())
         {
-            ShowStartupError(L"Unable to resolve the WireSock UI application directory.");
+            ShowStartupError(
+                L"Unable to resolve the WireSock UI application directory.",
+                nativeHostSelfTestRequested);
             return 1;
         }
 
         std::vector<ManifestEntry> manifestEntries;
         if (!ParsePayloadManifest(manifestEntries, diagnostic))
         {
-            ShowStartupError(diagnostic);
-            return 1;
+            ShowStartupError(diagnostic, nativeHostSelfTestRequested);
+            return nativeHostSelfTestRequested
+                ? PayloadValidationFailureExitCode
+                : 1;
         }
 
         std::vector<Handle> heldDirectories;
@@ -1800,20 +1890,23 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 heldFiles,
                 diagnostic))
         {
-            ShowStartupError(diagnostic);
-            return 1;
+            ShowStartupError(diagnostic, nativeHostSelfTestRequested);
+            return nativeHostSelfTestRequested
+                ? PayloadValidationFailureExitCode
+                : 1;
         }
 
         if (!SanitizeRuntimeEnvironment(diagnostic))
         {
-            ShowStartupError(diagnostic);
+            ShowStartupError(diagnostic, nativeHostSelfTestRequested);
             return 1;
         }
         if (SetCurrentDirectoryW(applicationDirectory.c_str()) == FALSE)
         {
             ShowStartupError(
                 L"Unable to select the validated application directory: " +
-                WindowsErrorMessage(GetLastError()));
+                    WindowsErrorMessage(GetLastError()),
+                nativeHostSelfTestRequested);
             return 1;
         }
 
@@ -1823,17 +1916,18 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         {
             ShowStartupError(
                 L"Unable to initialize the UI apartment: " +
-                HResultMessage(comResult));
+                    HResultMessage(comResult),
+                nativeHostSelfTestRequested);
             return 1;
         }
 
         DWORD exitCode = 1;
         const bool executed = ExecuteManagedApplication(
-            applicationDirectory, exitCode, diagnostic);
+            applicationDirectory, managedArgument, exitCode, diagnostic);
         CoUninitialize();
         if (!executed)
         {
-            ShowStartupError(diagnostic);
+            ShowStartupError(diagnostic, nativeHostSelfTestRequested);
             return 1;
         }
         return static_cast<int>(exitCode);
@@ -1855,12 +1949,14 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                     required) > 0)
                 detail.assign(converted.data());
         }
-        ShowStartupError(detail);
+        ShowStartupError(detail, nativeHostSelfTestRequested);
         return 1;
     }
     catch (...)
     {
-        ShowStartupError(L"Unexpected native startup failure.");
+        ShowStartupError(
+            L"Unexpected native startup failure.",
+            nativeHostSelfTestRequested);
         return 1;
     }
 }

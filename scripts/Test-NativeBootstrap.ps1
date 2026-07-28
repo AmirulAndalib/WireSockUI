@@ -97,6 +97,39 @@ function Set-UInt32InBytes {
     [BitConverter]::GetBytes($Value).CopyTo($Bytes, $Offset)
 }
 
+function Get-ByteSequenceCount {
+    param(
+        [byte[]]$Bytes,
+        [byte[]]$Sequence
+    )
+
+    if ($Sequence.Length -eq 0 -or $Sequence.Length -gt $Bytes.Length) {
+        return 0
+    }
+
+    $count = 0
+    for ($offset = 0;
+        $offset -le $Bytes.Length - $Sequence.Length;
+        $offset++) {
+        if ($Bytes[$offset] -ne $Sequence[0]) {
+            continue
+        }
+
+        $matches = $true
+        for ($index = 1; $index -lt $Sequence.Length; $index++) {
+            if ($Bytes[$offset + $index] -eq $Sequence[$index]) {
+                continue
+            }
+            $matches = $false
+            break
+        }
+        if ($matches) {
+            ++$count
+        }
+    }
+    return $count
+}
+
 function Assert-NativeValidatorRejectsMutation {
     param(
         [string]$Name,
@@ -147,6 +180,35 @@ if ($launcherFile.Length -gt 16MB) {
 }
 $launcherBytes = [IO.File]::ReadAllBytes($result.Path)
 $testLayout = Get-NativeValidationTestLayout -Bytes $launcherBytes
+$nativeHostSelfTestToken = 'WireSockUI.NativeHostSelfTest.v1'
+$nativeHostSelfTestCommand =
+    '--native-host-self-test "argument with spaces"'
+foreach ($literal in @(
+        $nativeHostSelfTestToken,
+        $nativeHostSelfTestCommand)) {
+    $literalBytes = [Text.Encoding]::Unicode.GetBytes($literal + [char]0)
+    if ((Get-ByteSequenceCount `
+                -Bytes $launcherBytes `
+                -Sequence $literalBytes) -ne 1) {
+        throw "Native launcher does not contain exactly one canonical '$literal' self-test contract literal."
+    }
+}
+
+$managedProgramPath = Join-Path (
+    Split-Path -Parent $PSScriptRoot) 'WireSockUI\Program.cs'
+$managedProgramSource = [IO.File]::ReadAllText(
+    $managedProgramPath,
+    [Text.UTF8Encoding]::new($false, $true))
+$managedTokenPattern =
+    'internal const string NativeHostSelfTestToken = "' +
+    [regex]::Escape($nativeHostSelfTestToken) +
+    '";'
+if ([regex]::Matches(
+        $managedProgramSource,
+        $managedTokenPattern,
+        [Text.RegularExpressions.RegexOptions]::CultureInvariant).Count -ne 1) {
+    throw 'Managed and native launchers do not share one exact self-test token.'
+}
 
 Assert-NativeValidatorRejectsMutation `
     -Name 'the base-relocation directory' `

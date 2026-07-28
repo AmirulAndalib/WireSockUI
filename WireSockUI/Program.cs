@@ -25,6 +25,7 @@ namespace WireSockUI
         internal const int MaxApplicationPayloadEntries = 4096;
         internal const int MaxWireSockSdkDirectoryEntries = 1024;
         internal const string NativeLauncherFileName = "WireSockUI.exe";
+        internal const string NativeHostSelfTestToken = "WireSockUI.NativeHostSelfTest.v1";
         private const uint LoadLibrarySearchDllLoadDir = 0x00000100;
         private const uint LoadLibrarySearchSystem32 = 0x00000800;
         private const uint LoadLibrarySearchUserDirs = 0x00000400;
@@ -104,14 +105,18 @@ namespace WireSockUI
         }
 
         [STAThread]
-        public static int HostedMain(string ignored)
+        public static int HostedMain(string hostedArgument)
         {
+            var nativeHostSelfTestRequested = string.Equals(
+                hostedArgument, NativeHostSelfTestToken, StringComparison.Ordinal);
             if (!TryValidateApplicationPayload(Assembly.GetExecutingAssembly().Location, out var payloadDiagnostic))
             {
-                MessageBox.Show(
+                return ReportStartupFailure(
                     $"WireSock UI cannot run safely from its current location.{Environment.NewLine}{Environment.NewLine}{payloadDiagnostic}{Environment.NewLine}{Environment.NewLine}Install WireSock UI in an administrator-owned directory and retry.",
-                    "WireSock UI startup error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return 1;
+                    "WireSock UI startup error",
+                    MessageBoxIcon.Error,
+                    nativeHostSelfTestRequested,
+                    41);
             }
 
             if (!TryValidateTrustedFilePath(
@@ -119,18 +124,36 @@ namespace WireSockUI
                     "WireSock UI native launcher",
                     out var launcherDiagnostic))
             {
-                MessageBox.Show(
+                return ReportStartupFailure(
                     $"WireSock UI must be started through its trusted native launcher.{Environment.NewLine}{Environment.NewLine}{launcherDiagnostic}",
-                    "WireSock UI startup error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return 1;
+                    "WireSock UI startup error",
+                    MessageBoxIcon.Error,
+                    nativeHostSelfTestRequested,
+                    42);
             }
 
             if (!IsProcessElevated(out var elevationDiagnostic))
             {
-                MessageBox.Show(
+                return ReportStartupFailure(
                     $"WireSock UI requires administrator privileges.{Environment.NewLine}{Environment.NewLine}{elevationDiagnostic}{Environment.NewLine}{Environment.NewLine}Start '{NativeLauncherFileName}' instead of the managed application payload.",
-                    "WireSock UI startup error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return 1;
+                    "WireSock UI startup error",
+                    MessageBoxIcon.Error,
+                    nativeHostSelfTestRequested,
+                    43);
+            }
+
+            if (nativeHostSelfTestRequested)
+            {
+                try
+                {
+                    return RunNativeHostSelfTest();
+                }
+                catch (Exception ex)
+                {
+                    WriteNativeHostSelfTestDiagnostic(
+                        $"The managed native-host self-test failed with {ex.GetType().Name}: {EscapeDiagnosticText(ex.Message)}");
+                    return 31;
+                }
             }
 
             if (!TryValidateInteractiveUserMatchesProcessUser(out var identityDiagnostic))
@@ -154,10 +177,6 @@ namespace WireSockUI
                     "WireSock UI startup error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return 1;
             }
-
-            if (TryRunNativeHostSelfTest(
-                    Environment.GetCommandLineArgs(), out var nativeHostSelfTestExitCode))
-                return nativeHostSelfTestExitCode;
 
             if (FrmSettings.TryRunAutoRunHelperCommandLine(
                     Environment.GetCommandLineArgs(),
@@ -246,36 +265,55 @@ namespace WireSockUI
             return 0;
         }
 
-        private static bool TryRunNativeHostSelfTest(string[] arguments, out int exitCode)
+        private static int ReportStartupFailure(
+            string message,
+            string title,
+            MessageBoxIcon icon,
+            bool nativeHostSelfTestRequested,
+            int nativeHostSelfTestExitCode)
         {
-            exitCode = 0;
-            if (arguments == null ||
-                arguments.Length != 3 ||
-                !string.Equals(
-                    arguments[1], "--native-host-self-test", StringComparison.Ordinal))
-                return false;
-
-            // This exact, read-only health check remains available in production
-            // so disposable MSI tests can exercise the installed CLR host. It
-            // runs only after payload, elevation, identity, and special-folder
-            // validation and deliberately avoids normal application state.
-            if (!string.Equals(
-                    arguments[2], "argument with spaces", StringComparison.Ordinal))
+            if (nativeHostSelfTestRequested)
             {
-                exitCode = 21;
-                return true;
+                WriteNativeHostSelfTestDiagnostic(message);
+                return nativeHostSelfTestExitCode;
             }
+
+            MessageBox.Show(message, title, MessageBoxButtons.OK, icon);
+            return 1;
+        }
+
+        private static void WriteNativeHostSelfTestDiagnostic(string message)
+        {
+            try
+            {
+                Console.Error.WriteLine(message ?? string.Empty);
+            }
+            catch (IOException)
+            {
+                // Diagnostic output is best effort and must not change the
+                // deterministic self-test exit contract.
+            }
+            catch (ObjectDisposedException)
+            {
+                // The host may not have inherited a writable standard-error
+                // stream. Preserve the exit code even when diagnostics cannot
+                // be emitted.
+            }
+        }
+
+        private static int RunNativeHostSelfTest()
+        {
+            // This exact, read-only health check remains available in production
+            // so disposable MSI tests can exercise the installed CLR host. The
+            // native host dispatches it only after payload and elevation checks.
+            // It intentionally tests only the host contract before interactive
+            // identity and per-user startup, so a headless disposable runner
+            // neither enters nor reads normal application state.
             if (System.Threading.Thread.CurrentThread.GetApartmentState() !=
                 System.Threading.ApartmentState.STA)
-            {
-                exitCode = 22;
-                return true;
-            }
+                return 22;
             if (Assembly.GetEntryAssembly() != null)
-            {
-                exitCode = 23;
-                return true;
-            }
+                return 23;
             foreach (var dangerousVariable in new[]
                      {
                          "COR_ENABLE_PROFILING",
@@ -295,8 +333,7 @@ namespace WireSockUI
             {
                 if (Environment.GetEnvironmentVariable(dangerousVariable) == null)
                     continue;
-                exitCode = 29;
-                return true;
+                return 29;
             }
 
             var assemblyDirectory = Path.GetDirectoryName(
@@ -306,10 +343,7 @@ namespace WireSockUI
                     NormalizePathRoot(AppDomain.CurrentDomain.BaseDirectory),
                     NormalizePathRoot(assemblyDirectory),
                     StringComparison.OrdinalIgnoreCase))
-            {
-                exitCode = 24;
-                return true;
-            }
+                return 24;
 
             var hostConfiguration =
                 System.Configuration.ConfigurationManager.OpenExeConfiguration(
@@ -318,18 +352,12 @@ namespace WireSockUI
                     Path.GetFullPath(hostConfiguration.FilePath),
                     Path.GetFullPath(ApplicationConfigurationPath),
                     StringComparison.OrdinalIgnoreCase))
-            {
-                exitCode = 25;
-                return true;
-            }
+                return 25;
 
             var resourcesExtensions = Assembly.Load(
                 "System.Resources.Extensions, Version=4.0.0.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51");
             if (resourcesExtensions.GetName().Version != new Version(10, 0, 0, 10))
-            {
-                exitCode = 26;
-                return true;
-            }
+                return 26;
 
             var launcherVersion = FileVersionInfo.GetVersionInfo(ApplicationLauncherPath);
             if (!string.Equals(
@@ -338,47 +366,9 @@ namespace WireSockUI
                     launcherVersion.ProductName, "WireSock UI", StringComparison.Ordinal) ||
                 !Version.TryParse(launcherVersion.ProductVersion, out var productVersion) ||
                 productVersion != Assembly.GetExecutingAssembly().GetName().Version)
-            {
-                exitCode = 27;
-                return true;
-            }
+                return 27;
 
-            var userConfiguration =
-                System.Configuration.ConfigurationManager.OpenExeConfiguration(
-                    System.Configuration.ConfigurationUserLevel.PerUserRoamingAndLocal);
-            var userConfigurationPath = userConfiguration.FilePath;
-            var localApplicationData =
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            var expectedCompanyRoot = Path.Combine(localApplicationData, "WireSockUI")
-                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) +
-                Path.DirectorySeparatorChar;
-            var versionDirectory = string.IsNullOrWhiteSpace(userConfigurationPath)
-                ? null
-                : Directory.GetParent(Path.GetFullPath(userConfigurationPath));
-            var identityDirectory = versionDirectory?.Parent;
-            if (string.IsNullOrWhiteSpace(userConfigurationPath) ||
-                !Path.IsPathRooted(userConfigurationPath) ||
-                !Path.GetFullPath(userConfigurationPath).StartsWith(
-                    expectedCompanyRoot, StringComparison.OrdinalIgnoreCase) ||
-                !string.Equals(
-                    Path.GetFileName(userConfigurationPath),
-                    "user.config",
-                    StringComparison.OrdinalIgnoreCase) ||
-                versionDirectory == null ||
-                !Version.TryParse(versionDirectory.Name, out var settingsVersion) ||
-                settingsVersion != Assembly.GetExecutingAssembly().GetName().Version ||
-                identityDirectory == null ||
-                !LegacyUserSettingsMigrationService.IsKnownLegacyIdentityDirectory(
-                    identityDirectory.Name))
-            {
-                exitCode = 30;
-                return true;
-            }
-
-            // Force LocalFileSettingsProvider initialization through the actual
-            // unmanaged host without mutating or saving user settings.
-            _ = Settings.Default.UpgradeRequired;
-            return true;
+            return 0;
         }
 
         private static bool TryValidateInteractiveUserMatchesProcessUser(out string diagnostic)

@@ -1153,11 +1153,12 @@ try {
     # Type as defined by MSI 5.
     $frameworkSearchRows = @(Get-MsiRows -Sql 'SELECT * FROM `RegLocator`')
     if ($frameworkSearchRows.Count -ne 1 -or
+        [string]$frameworkSearchRows[0][0] -cne 'NetFramework472ReleaseSearch' -or
         [int]$frameworkSearchRows[0][1] -ne 2 -or
         [string]$frameworkSearchRows[0][2] -cne 'SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full' -or
         [string]$frameworkSearchRows[0][3] -cne 'Release' -or
-        (([int]$frameworkSearchRows[0][4] -band 18) -ne 18)) {
-        throw 'MSI does not search the always-64-bit .NET Framework 4.7.2 release key.'
+        [int]$frameworkSearchRows[0][4] -ne 2) {
+        throw 'MSI does not search the documented 32-bit .NET Framework release key.'
     }
     $appSearchRows = @(Get-MsiRows -Sql 'SELECT * FROM `AppSearch`')
     if ($appSearchRows.Count -ne 1 -or

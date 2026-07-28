@@ -4537,6 +4537,37 @@ namespace WireSockUI.Tests
                                "true",
                                StringComparison.OrdinalIgnoreCase)),
                 "Expected the native-host configuration to retain generated binding redirects.");
+            var buildNativeBootstrap = project.Descendants("Target")
+                .Single(element => string.Equals(
+                    (string)element.Attribute("Name"),
+                    "BuildNativeBootstrap",
+                    StringComparison.Ordinal));
+            AssertTrue(
+                ((string)buildNativeBootstrap.Attribute("Condition") ?? string.Empty)
+                    .IndexOf(
+                        "'$(_IsPublishing)' != 'true'",
+                        StringComparison.Ordinal) >= 0,
+                "Publish builds must not create a misleading TargetDir launcher beside the reserved publish subtree.");
+            var removePublishIntermediateNativeBootstrap = project.Descendants("Target")
+                .Single(element => string.Equals(
+                    (string)element.Attribute("Name"),
+                    "RemovePublishIntermediateNativeBootstrap",
+                    StringComparison.Ordinal));
+            AssertTrue(
+                string.Equals(
+                    (string)removePublishIntermediateNativeBootstrap.Attribute("BeforeTargets"),
+                    "PrepareForPublish",
+                    StringComparison.Ordinal) &&
+                (((string)removePublishIntermediateNativeBootstrap.Attribute("Condition") ??
+                  string.Empty).IndexOf(
+                    "'$(_IsPublishing)' == 'true'",
+                    StringComparison.Ordinal) >= 0) &&
+                removePublishIntermediateNativeBootstrap.Elements("Delete").Any(element =>
+                    string.Equals(
+                        (string)element.Attribute("Files"),
+                        "$(TargetDir)WireSockUI.exe",
+                        StringComparison.Ordinal)),
+                "Normal and no-build publishes must remove a stale TargetDir launcher before producing the validated PublishDir launcher.");
 
             var bootstrapSource =
                 File.ReadAllText(FindRepositoryFile("WireSockUI.Bootstrap", "bootstrap.cpp"));

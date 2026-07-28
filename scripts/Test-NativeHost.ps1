@@ -168,6 +168,7 @@ function Invoke-NativeHostProbe {
     $startInfo.Arguments = '--native-host-self-test "argument with spaces"'
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardError = $true
     $startInfo.EnvironmentVariables['COR_ENABLE_PROFILING'] = '1'
     $startInfo.EnvironmentVariables['COR_PROFILER'] =
         '{11111111-1111-1111-1111-111111111111}'
@@ -202,6 +203,7 @@ function Invoke-NativeHostProbe {
     if ($null -eq $process) {
         throw 'The native-host smoke process could not be created.'
     }
+    $standardErrorTask = $process.StandardError.ReadToEndAsync()
 
     try {
         if (-not $process.WaitForExit(30000)) {
@@ -221,16 +223,42 @@ function Invoke-NativeHostProbe {
                 $script:nativeHostProcessesSafeForCleanup = $false
                 throw 'The native-host smoke process timed out and could not be terminated; preserving its test directory.'
             }
-            throw 'The native-host smoke process did not exit within 30 seconds.'
+            $standardError = $standardErrorTask.GetAwaiter().GetResult().Trim()
+            $detail = if ([string]::IsNullOrWhiteSpace($standardError)) {
+                ''
+            }
+            else {
+                " Diagnostic: $standardError"
+            }
+            throw "The native-host smoke process did not exit within 30 seconds.$detail"
         }
+        $standardError = $standardErrorTask.GetAwaiter().GetResult().Trim()
         if ($ExpectValidationFailure) {
-            if ($process.ExitCode -eq 0) {
-                throw 'The native host reached managed self-test code for a deliberately invalid payload.'
+            if ($process.ExitCode -ne 40 -or
+                -not $standardError.StartsWith(
+                    'WireSockUI native self-test: ',
+                    [StringComparison]::Ordinal)) {
+                $detail = if ([string]::IsNullOrWhiteSpace($standardError)) {
+                    ''
+                }
+                else {
+                    " Diagnostic: $standardError"
+                }
+                throw (
+                    'The deliberately invalid payload did not produce the ' +
+                    "native pre-CLR validation contract (exit 40). Actual exit " +
+                    "$($process.ExitCode).$detail")
             }
             return
         }
         if ($process.ExitCode -ne 0) {
-            throw "The native-host smoke process returned diagnostic exit code $($process.ExitCode)."
+            $detail = if ([string]::IsNullOrWhiteSpace($standardError)) {
+                ''
+            }
+            else {
+                " Diagnostic: $standardError"
+            }
+            throw "The native-host smoke process returned diagnostic exit code $($process.ExitCode).$detail"
         }
     }
     finally {

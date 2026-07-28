@@ -177,9 +177,22 @@
             TreatErrorsAsWarnings="false" />
   </Target>
 
+  <Target Name="RemovePublishIntermediateNativeBootstrap"
+          BeforeTargets="PrepareForPublish"
+          Condition="'$(WireSockUIAllowManagedOnlyBuild)' != 'true' and '$(Platform)' != 'AnyCPU' and '$(Platform)' != 'Any CPU' and '$(DesignTimeBuild)' != 'true' and '$(IsCrossTargetingBuild)' != 'true' and '$(_IsPublishing)' == 'true'">
+    <!--
+      A publish builds the managed TargetDir first, then creates and validates
+      the only runnable launcher in PublishDir. Remove any stale TargetDir
+      launcher on the publish graph so normal and no-build retries cannot
+      leave an old, misleading executable beside the reserved publish subtree.
+    -->
+    <Delete Files="$(TargetDir)WireSockUI.exe"
+            TreatErrorsAsWarnings="false" />
+  </Target>
+
   <Target Name="BuildNativeBootstrap"
           AfterTargets="Build"
-          Condition="'$(WireSockUIAllowManagedOnlyBuild)' != 'true' and '$(Platform)' != 'AnyCPU' and '$(Platform)' != 'Any CPU' and '$(DesignTimeBuild)' != 'true' and '$(IsCrossTargetingBuild)' != 'true'">
+          Condition="'$(WireSockUIAllowManagedOnlyBuild)' != 'true' and '$(Platform)' != 'AnyCPU' and '$(Platform)' != 'Any CPU' and '$(DesignTimeBuild)' != 'true' and '$(IsCrossTargetingBuild)' != 'true' and '$(_IsPublishing)' != 'true'">
     <Error Condition="!Exists('$(TargetPath).config')"
            Text="The generated managed configuration with binding redirects was not produced." />
     <Copy SourceFiles="$(TargetPath).config"
