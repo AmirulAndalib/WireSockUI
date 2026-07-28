@@ -14,6 +14,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+Import-Module (Join-Path $PSScriptRoot 'MsiTest.AccessControl.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'MsiTest.Diagnostics.psm1') -Force
 $maximumMsiBytes = 2GB - 1
 $maximumValidationMetadataBytes = 4MB
@@ -648,13 +649,6 @@ function Assert-ProtectedEntry {
         throw "Installed entry '$Path' has untrusted owner SID '$ownerSid'."
     }
 
-    [Int64]$writeMask =
-        [Int64][Security.AccessControl.FileSystemRights]::Write -bor
-        [Int64][Security.AccessControl.FileSystemRights]::Modify -bor
-        [Int64][Security.AccessControl.FileSystemRights]::Delete -bor
-        [Int64][Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
-        [Int64][Security.AccessControl.FileSystemRights]::ChangePermissions -bor
-        [Int64][Security.AccessControl.FileSystemRights]::TakeOwnership
     $privilegedWriterSids = @(
         'S-1-5-18',
         'S-1-5-32-544',
@@ -663,7 +657,8 @@ function Assert-ProtectedEntry {
     foreach ($rule in $acl.Access) {
         $ruleSid = Get-SidValue -IdentityReference $rule.IdentityReference
         if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
-            (([Int64]$rule.FileSystemRights -band $writeMask) -ne 0) -and
+            (Test-MsiWriteCapableFileSystemRights `
+                -Rights $rule.FileSystemRights) -and
             -not ($privilegedWriterSids -contains $ruleSid)) {
             throw "Installed entry '$Path' grants write-capable access to SID '$ruleSid'."
         }

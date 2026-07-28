@@ -361,6 +361,7 @@ jobs:
           }
           ./scripts/Test-MsiArchitectureIsolation.ps1 -MsiPath $msis.FullName
           ./scripts/Test-MsiArchitectureIsolation.Tests.ps1 -MsiPath $msis.FullName
+          ./scripts/MsiTest.AccessControl.Tests.ps1
           ./scripts/MsiTest.Diagnostics.Tests.ps1
 
   msi-transition-smoke:
