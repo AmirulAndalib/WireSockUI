@@ -72,11 +72,19 @@ namespace WireSockUI.Native
 
         public static WindowsApplicationContext FromCurrentProcess(
             string customName = null,
-            string appUserModelId = null)
+            string appUserModelId = null,
+            string activationExecutablePath = null)
         {
             string executablePath;
-            using (var process = Process.GetCurrentProcess())
-                executablePath = process.MainModule?.FileName;
+            if (!string.IsNullOrWhiteSpace(activationExecutablePath))
+            {
+                executablePath = Path.GetFullPath(activationExecutablePath);
+            }
+            else
+            {
+                using (var process = Process.GetCurrentProcess())
+                    executablePath = process.MainModule?.FileName;
+            }
 
             if (executablePath == null) throw new InvalidOperationException("No valid process module found.");
 

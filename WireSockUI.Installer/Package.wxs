@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" RequiredVersion="6.0.0">
+  <Package
+      Name="WireSock UI"
+      Manufacturer="WireSock Foundation"
+      Version="$(ProductVersion)"
+      ProductCode="$(ProductCode)"
+      UpgradeCode="{5C1DDAE5-6681-41BF-B153-AB2952AA6DF1}"
+      Scope="perMachine"
+      InstallerVersion="500"
+      Compressed="yes"
+      UpgradeStrategy="majorUpgrade">
+
+    <SummaryInformation
+        Description="WireSock UI per-machine installer"
+        Comments="Installs the architecture-specific WireSock UI runtime payload." />
+
+    <!--
+      Removing the previous package inside the transaction removes files that no
+      longer belong to the product, while rollback restores the previous version.
+      Same-version detection is intentional so an architecture transition cannot
+      install two packages into the shared, stable application directory.
+    -->
+    <MajorUpgrade
+        AllowDowngrades="no"
+        AllowSameVersionUpgrades="yes"
+        DowngradeErrorMessage="A newer version of [ProductName] is already installed."
+        IgnoreRemoveFailure="no"
+        MigrateFeatures="no"
+        Schedule="afterInstallInitialize" />
+
+    <Property Id="NETFRAMEWORK472RELEASE" Secure="yes">
+      <RegistrySearch
+          Id="NetFramework472ReleaseSearch"
+          Root="HKLM"
+          Key="SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full"
+          Name="Release"
+          Type="raw"
+          Bitness="always64" />
+    </Property>
+    <Launch
+        Condition="Installed OR VersionNT &gt;= 1000"
+        Message="WireSock UI requires Windows 10 or later." />
+    <?if $(var.ProductArchitecture) = arm64 ?>
+      <!-- .NET Framework did not gain native ARM64 CLR support until 4.8.1. -->
+      <Launch
+          Condition="Installed OR NETFRAMEWORK472RELEASE &gt;= &quot;#533320&quot;"
+          Message="WireSock UI for ARM64 requires Microsoft .NET Framework 4.8.1 or later." />
+    <?else?>
+      <Launch
+          Condition="Installed OR NETFRAMEWORK472RELEASE &gt;= &quot;#461808&quot;"
+          Message="WireSock UI requires Microsoft .NET Framework 4.7.2 or later." />
+    <?endif?>
+
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+    <Property Id="WIRESOCKUIARCHITECTURE" Value="$(ProductArchitecture)" />
+    <Property Id="WIRESOCKUIFLAVOR" Value="$(ProductFlavor)" />
+    <Property Id="ARPPRODUCTICON" Value="WireSockUI.ico" />
+    <Icon Id="WireSockUI.ico" SourceFile="..\WireSockUI\Resources\wiresock.ico" />
+
+    <!--
+      The mixed-case identifier is deliberately private. Callers cannot redirect
+      this elevated package to a user-writable directory with an MSI property.
+      Windows Installer creates the directory through its per-machine service.
+      MSI 5's standard MsiLockPermissionsEx action establishes the expected ACL
+      without introducing executable custom-action code.
+    -->
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <!--
+        This new single-leaf namespace intentionally does not reuse the legacy
+        Program Files\WireSock UI path or introduce an intermediate vendor
+        directory. A weak pre-existing path can be prepared as a junction or
+        with hard links before elevation; ACL repair after traversal is too late.
+      -->
+      <Directory
+          Id="WireSockInstallFolder"
+          Name="WireSock Foundation WireSock UI"
+          ComponentGuidGenerationSeed="$(FileComponentGuidSeed)">
+        <Component
+            Id="ApplicationDirectorySecurity"
+            Guid="$(SecurityComponentGuid)">
+          <CreateFolder>
+            <PermissionEx
+                Id="ApplicationDirectoryPermission"
+              Sddl="O:BAG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;GRGX;;;BU)" />
+          </CreateFolder>
+        </Component>
+        <!--
+          The CLR configuration is product-owned rather than user data. Making
+          it a companion of the versioned native launcher lets Windows
+          Installer's normal "omus" repair mode replace a modified copy instead
+          of applying the preserve-user-data rule for unversioned key files.
+        -->
+        <Component
+            Id="WireSockRuntimeHostFile"
+            Guid="$(RuntimeHostComponentGuid)">
+          <File
+              Id="WireSockRuntimeHostFile"
+              Source="!(bindpath.Payload)\WireSockUI.exe"
+              KeyPath="yes" />
+          <File
+              Id="WireSockRuntimeConfigFile"
+              Source="!(bindpath.Payload)\WireSockUI.exe.config"
+              CompanionFile="WireSockRuntimeHostFile" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <!-- ProgramMenuFolder resolves to the all-users Programs folder for ALLUSERS=1. -->
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component
+          Id="StartMenuShortcutComponent"
+          Guid="$(ShortcutComponentGuid)">
+        <Shortcut
+            Id="WireSockStartMenuShortcut"
+            Name="WireSock UI"
+            Description="WireSock UI"
+            Target="[WireSockInstallFolder]WireSockUI.exe"
+            WorkingDirectory="WireSockInstallFolder"
+            Advertise="no"
+            Icon="WireSockUI.ico"
+            IconIndex="0" />
+        <RegistryValue
+            Root="HKLM"
+            Key="Software\WireSock Foundation\WireSock UI"
+            Name="StartMenuShortcut"
+            Type="integer"
+            Value="1"
+            KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <!--
+      WiX v5+ built-in file harvesting generates stable component identities from
+      the installed paths. The build wrapper stages only runtime files, and the
+      project rejects unfiltered payload directories before this authoring runs.
+      The extension filters below are a second line of defense.
+    -->
+    <Files Include="!(bindpath.Payload)\**" Directory="WireSockInstallFolder">
+      <Exclude Files="!(bindpath.Payload)\WireSockUI.exe" />
+      <Exclude Files="!(bindpath.Payload)\WireSockUI.exe.config" />
+      <Exclude Files="!(bindpath.Payload)\**.pdb" />
+      <Exclude Files="!(bindpath.Payload)\**.wixpdb" />
+      <Exclude Files="!(bindpath.Payload)\**.msi" />
+      <Exclude Files="!(bindpath.Payload)\**.msix" />
+      <Exclude Files="!(bindpath.Payload)\**.msp" />
+      <Exclude Files="!(bindpath.Payload)\**.cab" />
+      <Exclude Files="!(bindpath.Payload)\**.zip" />
+      <Exclude Files="!(bindpath.Payload)\**.nupkg" />
+      <Exclude Files="!(bindpath.Payload)\**.snupkg" />
+      <Exclude Files="!(bindpath.Payload)\**.sha256" />
+      <Exclude Files="!(bindpath.Payload)\**.obj" />
+      <Exclude Files="!(bindpath.Payload)\**.res" />
+      <Exclude Files="!(bindpath.Payload)\**.exp" />
+      <Exclude Files="!(bindpath.Payload)\**.lib" />
+      <Exclude Files="!(bindpath.Payload)\**.ilk" />
+      <Exclude Files="!(bindpath.Payload)\**.map" />
+      <Exclude Files="!(bindpath.Payload)\**.spdx.json" />
+      <Exclude Files="!(bindpath.Payload)\**.sbom.json" />
+      <Exclude Files="!(bindpath.Payload)\**.intoto.jsonl" />
+    </Files>
+  </Package>
+</Wix>

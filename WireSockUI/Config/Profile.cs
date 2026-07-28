@@ -17,6 +17,18 @@ namespace WireSockUI.Config
         internal const int MaxProfileNameLength = 250;
         internal const long MaxProfileSizeBytes = 1024 * 1024;
         internal const int MaxProfileCatalogEntries = 1024;
+        internal const int MaxAddressListCharacters = 256 * 1024;
+        internal const int MaxAddressListValues = 4096;
+        internal const int MaxAddressValueCharacters = 256;
+        internal const int MaxApplicationListCharacters = 64 * 1024;
+        internal const int MaxApplicationListValues = 1024;
+        internal const int MaxApplicationValueCharacters = 32767;
+        internal const int MaxScriptValueCharacters = 32767;
+        internal const int MaxScalarValueCharacters = 4096;
+        internal const int MaxEndpointValueCharacters = 1024;
+        internal const int MaxKeyValueCharacters = 64;
+        internal const int MaxNumericValueCharacters = 32;
+        internal const int MaxBooleanValueCharacters = 16;
 
         private static readonly HashSet<string> ReservedDeviceNames = new HashSet<string>(
             new[]
@@ -43,7 +55,15 @@ namespace WireSockUI.Config
             "Socks5ProxyAllTraffic"
         };
 
+        private static readonly Dictionary<string, string> SupportedInterfaceKeyLookup =
+            BuildKeyLookup(SupportedInterfaceKeys);
+
+        private static readonly Dictionary<string, string> SupportedPeerKeyLookup =
+            BuildKeyLookup(SupportedPeerKeys);
+
         private string _address;
+        private string _allowedApps;
+        private string _disallowedApps;
 
         // WireSock Extensions
         private string _allowedIPs;
@@ -55,6 +75,10 @@ namespace WireSockUI.Config
         private string _scriptExecTimeout;
         private string _disallowedIPs;
         private string _virtualAdapterMode;
+        private string _preUpScript;
+        private string _postUpScript;
+        private string _preDownScript;
+        private string _postDownScript;
 
         private string _presharedKey;
 
@@ -64,6 +88,8 @@ namespace WireSockUI.Config
         // Peer values
         private string _publicKey;
         private string _socks5Proxy;
+        private string _socks5ProxyUsername;
+        private string _socks5ProxyPassword;
         private string _socks5ProxyAllTraffic;
 
         /// <summary>
@@ -96,7 +122,7 @@ namespace WireSockUI.Config
 
             var section = parser.GetSection("Interface");
             ValidateUnsupportedInterfaceDirectives(section);
-            ValidateAllowedKeys("Interface", section, SupportedInterfaceKeys);
+            ValidateAllowedKeys("Interface", section, SupportedInterfaceKeyLookup);
 
             PrivateKey = GetRequiredValue(profilePath, "Interface", section, "PrivateKey");
             Address = GetRequiredValue(profilePath, "Interface", section, "Address");
@@ -118,7 +144,7 @@ namespace WireSockUI.Config
             ValidateAllowedSections(configESections);
             section = parser.GetSection("Peer");
             ValidateUnsupportedPeerDirectives(section);
-            ValidateAllowedKeys("Peer", section, SupportedPeerKeys);
+            ValidateAllowedKeys("Peer", section, SupportedPeerKeyLookup);
 
             PeerKey = GetRequiredValue(profilePath, "Peer", section, "PublicKey");
             PresharedKey = section.Get("PresharedKey");
@@ -235,13 +261,45 @@ namespace WireSockUI.Config
             }
         }
 
-        public string PreUpScript { get; set; }
+        public string PreUpScript
+        {
+            get => _preUpScript;
+            set
+            {
+                ValidateValueLength("Interface", "PreUp", value, MaxScriptValueCharacters);
+                _preUpScript = value;
+            }
+        }
 
-        public string PostUpScript { get; set; }
+        public string PostUpScript
+        {
+            get => _postUpScript;
+            set
+            {
+                ValidateValueLength("Interface", "PostUp", value, MaxScriptValueCharacters);
+                _postUpScript = value;
+            }
+        }
 
-        public string PreDownScript { get; set; }
+        public string PreDownScript
+        {
+            get => _preDownScript;
+            set
+            {
+                ValidateValueLength("Interface", "PreDown", value, MaxScriptValueCharacters);
+                _preDownScript = value;
+            }
+        }
 
-        public string PostDownScript { get; set; }
+        public string PostDownScript
+        {
+            get => _postDownScript;
+            set
+            {
+                ValidateValueLength("Interface", "PostDown", value, MaxScriptValueCharacters);
+                _postDownScript = value;
+            }
+        }
 
         public IReadOnlyList<KeyValuePair<string, string>> GetConfiguredScriptHooks()
         {
@@ -319,6 +377,7 @@ namespace WireSockUI.Config
             get => _endpoint;
             set
             {
+                ValidateValueLength("Peer", "Endpoint", value, MaxEndpointValueCharacters);
                 if (!IpHelper.IsValidAddress(value))
                     throw new FormatException("\"Endpoint\" in \"Peer\", is not a valid IPv4, IPv6 or domain address.");
 
@@ -344,13 +403,41 @@ namespace WireSockUI.Config
         ///     Peer allowed applications list
         /// </summary>
         /// <remarks>WireSock specific extension</remarks>
-        public string AllowedApps { get; set; }
+        public string AllowedApps
+        {
+            get => _allowedApps;
+            set
+            {
+                ValidateListBounds(
+                    "Peer",
+                    "AllowedApps",
+                    value,
+                    MaxApplicationListCharacters,
+                    MaxApplicationListValues,
+                    MaxApplicationValueCharacters);
+                _allowedApps = value;
+            }
+        }
 
         /// <summary>
         ///     Peer disallowed applications list
         /// </summary>
         /// <remarks>WireSock specific extension</remarks>
-        public string DisallowedApps { get; set; }
+        public string DisallowedApps
+        {
+            get => _disallowedApps;
+            set
+            {
+                ValidateListBounds(
+                    "Peer",
+                    "DisallowedApps",
+                    value,
+                    MaxApplicationListCharacters,
+                    MaxApplicationListValues,
+                    MaxApplicationValueCharacters);
+                _disallowedApps = value;
+            }
+        }
 
         /// <summary>
         ///     Peer disallowed IP addresses
@@ -377,6 +464,7 @@ namespace WireSockUI.Config
             get => _socks5Proxy;
             set
             {
+                ValidateValueLength("Peer", "Socks5Proxy", value, MaxEndpointValueCharacters);
                 if (!string.IsNullOrEmpty(value))
                 {
                     if (!IpHelper.IsValidAddress(value))
@@ -396,13 +484,37 @@ namespace WireSockUI.Config
         ///     Peer SOCKS5 proxy username
         /// </summary>
         /// <remarks>WireSock specific extension</remarks>
-        public string Socks5ProxyUsername { get; set; }
+        public string Socks5ProxyUsername
+        {
+            get => _socks5ProxyUsername;
+            set
+            {
+                ValidateValueLength(
+                    "Peer",
+                    "Socks5ProxyUsername",
+                    value,
+                    MaxScalarValueCharacters);
+                _socks5ProxyUsername = value;
+            }
+        }
 
         /// <summary>
         ///     Peer SOCKS5 proxy password
         /// </summary>
         /// <remarks>WireSock specific extension</remarks>
-        public string Socks5ProxyPassword { get; set; }
+        public string Socks5ProxyPassword
+        {
+            get => _socks5ProxyPassword;
+            set
+            {
+                ValidateValueLength(
+                    "Peer",
+                    "Socks5ProxyPassword",
+                    value,
+                    MaxScalarValueCharacters);
+                _socks5ProxyPassword = value;
+            }
+        }
 
         /// <summary>
         ///     Route all WireGuard traffic through the configured SOCKS5 proxy.
@@ -422,6 +534,7 @@ namespace WireSockUI.Config
         {
             byte[] keyBinary;
 
+            ValidateValueLength(section, key, keyValue, MaxKeyValueCharacters);
             if (string.IsNullOrWhiteSpace(keyValue)) return;
 
             try
@@ -442,16 +555,34 @@ namespace WireSockUI.Config
         internal static bool ValidateAddresses(string section, string key, string keyValue,
             Func<string, bool> validator, bool ignoreBlankItems = false)
         {
+            if (validator == null) throw new ArgumentNullException(nameof(validator));
+
+            ValidateListBounds(
+                section,
+                key,
+                keyValue,
+                MaxAddressListCharacters,
+                MaxAddressListValues,
+                MaxAddressValueCharacters);
             if (string.IsNullOrWhiteSpace(keyValue)) return false;
 
             var hasAddress = false;
-            foreach (var value in keyValue.Split(','))
+            var itemStart = 0;
+            while (itemStart <= keyValue.Length)
             {
+                var commaIndex = keyValue.IndexOf(',', itemStart);
+                var itemEnd = commaIndex < 0 ? keyValue.Length : commaIndex;
+                var value = keyValue.Substring(itemStart, itemEnd - itemStart);
                 var trimmedValue = value.Trim();
                 if (string.IsNullOrWhiteSpace(trimmedValue))
                 {
                     if (ignoreBlankItems)
+                    {
+                        if (commaIndex < 0)
+                            break;
+                        itemStart = commaIndex + 1;
                         continue;
+                    }
 
                     throw new FormatException(
                         $"\"{key}\" in \"{section}\", invalid address \"{EscapeDiagnosticToken(value)}\".");
@@ -462,6 +593,9 @@ namespace WireSockUI.Config
                         $"\"{key}\" in \"{section}\", invalid address \"{EscapeDiagnosticToken(value)}\".");
 
                 hasAddress = true;
+                if (commaIndex < 0)
+                    break;
+                itemStart = commaIndex + 1;
             }
 
             return hasAddress;
@@ -469,6 +603,7 @@ namespace WireSockUI.Config
 
         internal static void ValidateBool(string section, string key, string keyValue)
         {
+            ValidateValueLength(section, key, keyValue, MaxBooleanValueCharacters);
             if (string.IsNullOrWhiteSpace(keyValue)) return;
 
             var trimmedValue = keyValue.Trim();
@@ -515,6 +650,7 @@ namespace WireSockUI.Config
 
         internal static void ValidateUInt(string section, string key, string keyValue, uint minValue, uint maxValue)
         {
+            ValidateValueLength(section, key, keyValue, MaxNumericValueCharacters);
             if (string.IsNullOrWhiteSpace(keyValue)) return;
 
             if (!ConfigValueValidator.IsUIntDecimalInRange(keyValue, minValue, maxValue))
@@ -539,11 +675,11 @@ namespace WireSockUI.Config
         private static void ValidateAllowedKeys(
             string sectionName,
             Dictionary<string, string> section,
-            IEnumerable<string> allowedKeys)
+            Dictionary<string, string> canonicalKeys)
         {
-            var canonicalKeys = allowedKeys.ToDictionary(key => key, key => key, StringComparer.OrdinalIgnoreCase);
-            foreach (var key in section.Keys)
+            foreach (var pair in section)
             {
+                var key = pair.Key;
                 if (!canonicalKeys.TryGetValue(key, out var canonicalKey))
                     throw new FormatException(
                         $"Configuration key \"{EscapeDiagnosticToken(key)}\" in \"{EscapeDiagnosticToken(sectionName)}\" is not supported and will not be passed to the elevated WireSock engine. " +
@@ -552,6 +688,129 @@ namespace WireSockUI.Config
                 if (!string.Equals(key, canonicalKey, StringComparison.Ordinal))
                     throw new FormatException(
                         $"Configuration key \"{EscapeDiagnosticToken(key)}\" has invalid casing. The current SDK expects \"{EscapeDiagnosticToken(canonicalKey)}\".");
+
+                ValidateValueLength(
+                    sectionName,
+                    canonicalKey,
+                    pair.Value,
+                    GetMaximumValueLength(canonicalKey));
+            }
+        }
+
+        internal static bool IsCanonicalSectionName(string sectionName)
+        {
+            return string.Equals(sectionName, "Interface", StringComparison.Ordinal) ||
+                   string.Equals(sectionName, "Peer", StringComparison.Ordinal);
+        }
+
+        internal static bool TryGetCanonicalKey(
+            string sectionName,
+            string key,
+            out string canonicalKey)
+        {
+            canonicalKey = null;
+            if (key == null)
+                return false;
+
+            if (string.Equals(sectionName, "Interface", StringComparison.Ordinal))
+                return SupportedInterfaceKeyLookup.TryGetValue(key, out canonicalKey);
+            if (string.Equals(sectionName, "Peer", StringComparison.Ordinal))
+                return SupportedPeerKeyLookup.TryGetValue(key, out canonicalKey);
+            return false;
+        }
+
+        private static Dictionary<string, string> BuildKeyLookup(IEnumerable<string> keys)
+        {
+            return keys.ToDictionary(key => key, key => key, StringComparer.OrdinalIgnoreCase);
+        }
+
+        private static int GetMaximumValueLength(string canonicalKey)
+        {
+            switch (canonicalKey)
+            {
+                case "PrivateKey":
+                case "PublicKey":
+                case "PresharedKey":
+                    return MaxKeyValueCharacters;
+                case "Address":
+                case "DNS":
+                case "AllowedIPs":
+                case "DisallowedIPs":
+                    return MaxAddressListCharacters;
+                case "AllowedApps":
+                case "DisallowedApps":
+                    return MaxApplicationListCharacters;
+                case "PreUp":
+                case "PostUp":
+                case "PreDown":
+                case "PostDown":
+                    return MaxScriptValueCharacters;
+                case "Endpoint":
+                case "Socks5Proxy":
+                    return MaxEndpointValueCharacters;
+                case "MTU":
+                case "ListenPort":
+                case "ScriptExecTimeout":
+                case "PersistentKeepalive":
+                    return MaxNumericValueCharacters;
+                case "VirtualAdapterMode":
+                case "EnableDefaultGateway":
+                case "Socks5ProxyAllTraffic":
+                    return MaxBooleanValueCharacters;
+                default:
+                    return MaxScalarValueCharacters;
+            }
+        }
+
+        private static void ValidateValueLength(
+            string section,
+            string key,
+            string value,
+            int maximumCharacters)
+        {
+            if (value == null || value.Length <= maximumCharacters)
+                return;
+
+            throw new FormatException(
+                $"\"{key}\" in \"{section}\" exceeds the supported limit of {maximumCharacters} characters.");
+        }
+
+        private static void ValidateListBounds(
+            string section,
+            string key,
+            string value,
+            int maximumCharacters,
+            int maximumValues,
+            int maximumValueCharacters)
+        {
+            if (value == null)
+                return;
+
+            ValidateValueLength(section, key, value, maximumCharacters);
+
+            var valueCount = 1;
+            var itemStart = 0;
+            for (var index = 0; index <= value.Length; index++)
+            {
+                if (index < value.Length && value[index] != ',')
+                    continue;
+
+                if (index - itemStart > maximumValueCharacters)
+                {
+                    var diagnosticLength = Math.Min(index - itemStart, 161);
+                    var diagnosticValue = value.Substring(itemStart, diagnosticLength);
+                    throw new FormatException(
+                        $"\"{key}\" in \"{section}\" contains a value \"{EscapeDiagnosticToken(diagnosticValue)}\" longer than the supported limit of {maximumValueCharacters} characters.");
+                }
+
+                if (index == value.Length)
+                    break;
+
+                valueCount++;
+                if (valueCount > maximumValues)
+                    throw new FormatException(
+                        $"\"{key}\" in \"{section}\" contains more than the supported limit of {maximumValues} values.");
+                itemStart = index + 1;
             }
         }
 

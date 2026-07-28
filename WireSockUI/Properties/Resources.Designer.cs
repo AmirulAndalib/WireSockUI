@@ -847,7 +847,7 @@ namespace WireSockUI.Properties {
         }
 
         /// <summary>
-        ///   Looks up a localized string similar to Open profiles folder.
+        ///   Looks up a localized string similar to Copy profiles folder path.
         /// </summary>
         internal static string SettingsProfiles {
             get {
@@ -856,11 +856,22 @@ namespace WireSockUI.Properties {
         }
 
         /// <summary>
-        ///   Looks up a localized string similar to Error opening profiles folder: {0}.
+        ///   Looks up a localized string similar to Error copying profiles folder path: {0}.
         /// </summary>
         internal static string SettingsProfilesFolderError {
             get {
                 return ResourceManager.GetString("SettingsProfilesFolderError", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   Looks up a localized string similar to The profiles folder path was copied to the clipboard:
+        ///
+        ///{0}.
+        /// </summary>
+        internal static string SettingsProfilesFolderCopied {
+            get {
+                return ResourceManager.GetString("SettingsProfilesFolderCopied", resourceCulture);
             }
         }
 

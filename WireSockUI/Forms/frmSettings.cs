@@ -2,7 +2,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
-using System.Reflection;
 using System.Security;
 using System.Security.AccessControl;
 using System.Security.Cryptography;
@@ -20,17 +19,21 @@ namespace WireSockUI.Forms
     public partial class FrmSettings : Form
     {
         private const int AutoRunInspectionTimeoutMilliseconds = 5000;
+        private const int AutoRunMutationTimeoutMilliseconds = 15000;
         // TaskScheduler maps BelowNormal to the native Task Scheduler 2.0 priority value 7.
         internal const ProcessPriorityClass AutoRunTaskPriorityClass = ProcessPriorityClass.BelowNormal;
         internal const string AutoRunTaskSecurityDescriptorSddl =
             "O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)";
-        private static readonly SemaphoreSlim AutoRunOperationGate = new SemaphoreSlim(1, 1);
+        private static readonly AutoRunOperationService AutoRunOperations =
+            new AutoRunOperationService(() => Program.ApplicationLauncherPath);
+        private readonly CancellationTokenSource _lifetimeCancellation = new CancellationTokenSource();
         private AutoRunStatus _initialAutoRunStatus;
         private bool _initialAutoRunUsesPathScopedTask;
         private bool _hasUnverifiedLegacyShortcut;
         private bool _legacyShortcutMigrationApproved;
         private string _legacyStartupShortcutPath;
         private System.Threading.Tasks.Task<AutoRunInspection> _autoRunInspectionTask;
+        private bool _managedResourcesDisposed;
 
         internal enum AutoRunStatus
         {
@@ -100,6 +103,15 @@ namespace WireSockUI.Forms
             if (ddlLogLevel.SelectedItem == null)
                 ddlLogLevel.SelectedItem = "Error";
 
+#if !WIRESOCKUI_ENABLE_UWP
+            // These settings have no runtime implementation in the classic build. Preserve
+            // their stored values, but do not present controls that promise unsupported behavior.
+            chkAutoUpdate.Enabled = false;
+            chkAutoUpdate.Visible = false;
+            chkNotify.Enabled = false;
+            chkNotify.Visible = false;
+#endif
+
             Shown += OnSettingsShown;
         }
 
@@ -119,20 +131,10 @@ namespace WireSockUI.Forms
         private async void OnSettingsShown(object sender, EventArgs e)
         {
             Shown -= OnSettingsShown;
-            _autoRunInspectionTask = RunSerializedAutoRunOperationAsync(InspectAutoRun);
+            _autoRunInspectionTask = InspectAutoRunIsolatedAsync(_lifetimeCancellation.Token);
 
             try
             {
-                var completedTask = await System.Threading.Tasks.Task.WhenAny(
-                    _autoRunInspectionTask,
-                    System.Threading.Tasks.Task.Delay(AutoRunInspectionTimeoutMilliseconds));
-                if (!ReferenceEquals(completedTask, _autoRunInspectionTask))
-                {
-                    ObserveLateAutoRunInspectionFailure(_autoRunInspectionTask);
-                    throw new TimeoutException(
-                        $"Autorun inspection did not complete within {AutoRunInspectionTimeoutMilliseconds} ms.");
-                }
-
                 var inspection = await _autoRunInspectionTask;
                 if (IsDisposed || Disposing)
                     return;
@@ -165,6 +167,10 @@ namespace WireSockUI.Forms
                         MessageBoxButtons.OK,
                         MessageBoxIcon.Warning);
             }
+            catch (OperationCanceledException) when (IsDisposed || Disposing)
+            {
+                // Form disposal terminates the isolated helper and suppresses stale UI updates.
+            }
             catch (Exception ex)
             {
                 if (!IsDisposed && !Disposing)
@@ -179,41 +185,39 @@ namespace WireSockUI.Forms
             }
         }
 
-        private static void ObserveLateAutoRunInspectionFailure(
-            System.Threading.Tasks.Task<AutoRunInspection> inspectionTask)
-        {
-            inspectionTask.ContinueWith(
-                task => Trace.TraceWarning(
-                    $"The timed-out autorun inspection later failed: {task.Exception?.GetBaseException()}"),
-                CancellationToken.None,
-                System.Threading.Tasks.TaskContinuationOptions.OnlyOnFaulted |
-                System.Threading.Tasks.TaskContinuationOptions.ExecuteSynchronously,
-                System.Threading.Tasks.TaskScheduler.Default);
-        }
-
-        private void OnProfilesFolderClick(object sender, EventArgs e)
+        private void OnCopyProfilesFolderPathClick(object sender, EventArgs e)
         {
             try
             {
-                var windowsDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
-                if (string.IsNullOrWhiteSpace(windowsDirectory))
-                    throw new DirectoryNotFoundException("The Windows installation directory is unavailable.");
-
-                var explorerPath = Path.Combine(windowsDirectory, "explorer.exe");
-                if (!File.Exists(explorerPath))
-                    throw new FileNotFoundException("Windows Explorer was not found.", explorerPath);
-
-                Process.Start(explorerPath, $"\"{Global.ConfigsFolder}\"");
+                var profilesFolder = GetProfilesFolderPathForClipboard(Global.ConfigsFolder);
+                Clipboard.SetText(profilesFolder, TextDataFormat.UnicodeText);
+                MessageBox.Show(
+                    string.Format(Resources.SettingsProfilesFolderCopied, profilesFolder),
+                    Resources.SettingsProfiles,
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
             }
             catch (Exception ex)
             {
-                ShowSettingsError(Resources.SettingsProfilesFolderError, ex);
+                ShowSettingsError(
+                    Resources.SettingsProfilesFolderError,
+                    ex);
             }
+        }
+
+        internal static string GetProfilesFolderPathForClipboard(string profilesFolder)
+        {
+            return Global.RequireAbsoluteSpecialFolderRoot(
+                profilesFolder,
+                "the profiles folder");
         }
 
         private static string GetAppName()
         {
-            return Assembly.GetExecutingAssembly().GetName().Name;
+            var launcherName = Path.GetFileNameWithoutExtension(Program.ApplicationLauncherPath);
+            if (string.IsNullOrWhiteSpace(launcherName))
+                throw new InvalidOperationException("The trusted WireSock UI launcher name is unavailable.");
+            return launcherName;
         }
 
         private static string GetLegacyStartupShortcutPath()
@@ -227,12 +231,12 @@ namespace WireSockUI.Forms
 
         private static string GetAutoRunTaskName()
         {
-            return BuildAutoRunTaskName(Application.ExecutablePath);
+            return BuildAutoRunTaskName(Program.ApplicationLauncherPath);
         }
 
         private static string GetLegacyPathScopedAutoRunTaskName()
         {
-            return BuildLegacyPathScopedAutoRunTaskName(Application.ExecutablePath);
+            return BuildLegacyPathScopedAutoRunTaskName(Program.ApplicationLauncherPath);
         }
 
         private static string GetLegacyAutoRunTaskName()
@@ -442,14 +446,14 @@ namespace WireSockUI.Forms
                 return inspection;
 
             var replaceable = IsTaskDefinitionReplaceableByExecutable(
-                task.Definition, Application.ExecutablePath);
+                task.Definition, Program.ApplicationLauncherPath);
             inspection.Conflict = !replaceable &&
                                   !(ignoreTaskScopedToAnotherUser &&
                                     IsTaskScopedToAnotherUser(task.Definition));
             inspection.EnabledForCurrentExecutable = replaceable && task.Enabled;
             inspection.Canonical = pathScopedCandidate &&
                                    IsTaskDefinitionOwnedByExecutable(
-                                       task.Definition, task.Enabled, Application.ExecutablePath) &&
+                                       task.Definition, task.Enabled, Program.ApplicationLauncherPath) &&
                                    IsAutoRunTaskSecurityCanonical(task);
             return inspection;
         }
@@ -513,18 +517,218 @@ namespace WireSockUI.Forms
                 Settings.Default.AutoRun);
         }
 
-        private static async System.Threading.Tasks.Task<T> RunSerializedAutoRunOperationAsync<T>(Func<T> operation)
+        private static async System.Threading.Tasks.Task<AutoRunInspection> InspectAutoRunIsolatedAsync(
+            CancellationToken cancellationToken)
         {
-            if (operation == null) throw new ArgumentNullException(nameof(operation));
+            var result = await AutoRunOperations.ExecuteAsync(
+                    AutoRunHelperOperation.Inspect,
+                    TimeSpan.FromMilliseconds(AutoRunInspectionTimeoutMilliseconds),
+                    false,
+                    cancellationToken)
+                .ConfigureAwait(false);
 
-            await AutoRunOperationGate.WaitAsync().ConfigureAwait(false);
+            switch (result.Outcome)
+            {
+                case AutoRunOperationOutcome.Succeeded:
+                    return DeserializeAutoRunInspection(result.Payload);
+                case AutoRunOperationOutcome.TimedOut:
+                    throw new TimeoutException(result.Diagnostic);
+                case AutoRunOperationOutcome.StateUncertain:
+                    throw new InvalidOperationException(result.Diagnostic);
+                default:
+                    throw new IOException(
+                        result.Diagnostic ?? "The autorun helper could not inspect Task Scheduler state.");
+            }
+        }
+
+        private static async System.Threading.Tasks.Task<bool> ExecuteAutoRunMutationAsync(
+            AutoRunHelperOperation operation,
+            CancellationToken cancellationToken)
+        {
+            var result = await AutoRunOperations.ExecuteAsync(
+                    operation,
+                    TimeSpan.FromMilliseconds(AutoRunMutationTimeoutMilliseconds),
+                    true,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (result.Outcome == AutoRunOperationOutcome.Succeeded)
+                return true;
+            if (result.Outcome == AutoRunOperationOutcome.Failed)
+                throw new InvalidOperationException(
+                    result.Diagnostic ?? $"The autorun {operation} operation failed.");
+
+            if (result.Outcome == AutoRunOperationOutcome.StateUncertain)
+            {
+                var verification = await AutoRunOperations.ExecuteAsync(
+                        AutoRunHelperOperation.Inspect,
+                        TimeSpan.FromMilliseconds(AutoRunInspectionTimeoutMilliseconds),
+                        false,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                if (verification.Outcome == AutoRunOperationOutcome.Succeeded)
+                {
+                    var inspection = DeserializeAutoRunInspection(verification.Payload);
+                    if (TryResolveMutationOutcome(operation, inspection, out var succeeded))
+                    {
+                        AutoRunOperations.AcknowledgeVerifiedMutationState();
+                        if (!result.OperationStarted)
+                            return await ExecuteAutoRunMutationAsync(operation, cancellationToken)
+                                .ConfigureAwait(false);
+                        if (succeeded)
+                            return true;
+
+                        throw new InvalidOperationException(
+                            $"The timed-out autorun {operation} operation was verified not to have completed.");
+                    }
+                }
+            }
+
+            throw new AutoRunOperationUncertainException(
+                result.Diagnostic ??
+                $"The autorun {operation} operation did not complete within its safety limit, and its final state could not be verified. No compensating autorun mutation will be started.");
+        }
+
+        private static bool TryResolveMutationOutcome(
+            AutoRunHelperOperation operation,
+            AutoRunInspection inspection,
+            out bool succeeded)
+        {
+            succeeded = false;
+            if (inspection == null ||
+                inspection.Status == AutoRunStatus.Unknown ||
+                inspection.Status == AutoRunStatus.Conflict)
+                return false;
+
+            switch (operation)
+            {
+                case AutoRunHelperOperation.Enable:
+                    if (inspection.Status == AutoRunStatus.Enabled &&
+                        inspection.UsesPathScopedTask)
+                    {
+                        succeeded = true;
+                        return true;
+                    }
+
+                    return inspection.Status == AutoRunStatus.Disabled ||
+                           inspection.Status == AutoRunStatus.LegacyShortcutMigrationRequired;
+
+                case AutoRunHelperOperation.Disable:
+                    if (inspection.Status == AutoRunStatus.Disabled ||
+                        inspection.Status == AutoRunStatus.LegacyShortcutMigrationRequired)
+                    {
+                        succeeded = true;
+                        return true;
+                    }
+
+                    return inspection.Status == AutoRunStatus.Enabled ||
+                           inspection.Status == AutoRunStatus.LegacyEnabled;
+
+                case AutoRunHelperOperation.DeleteLegacyShortcut:
+                    succeeded = !inspection.HasUnverifiedLegacyShortcut;
+                    return true;
+
+                default:
+                    return false;
+            }
+        }
+
+        private static string SerializeAutoRunInspection(AutoRunInspection inspection)
+        {
+            if (inspection == null)
+                throw new ArgumentNullException(nameof(inspection));
+
+            return string.Join(
+                "|",
+                "1",
+                ((int)inspection.Status).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                inspection.UsesPathScopedTask ? "1" : "0",
+                inspection.HasUnverifiedLegacyShortcut ? "1" : "0",
+                EncodeHelperField(inspection.LegacyStartupShortcutPath),
+                EncodeHelperField(inspection.Diagnostic));
+        }
+
+        private static AutoRunInspection DeserializeAutoRunInspection(string payload)
+        {
+            var fields = (payload ?? string.Empty).Split('|');
+            if (fields.Length != 6 || fields[0] != "1" ||
+                !int.TryParse(
+                    fields[1],
+                    System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out var statusValue) ||
+                !Enum.IsDefined(typeof(AutoRunStatus), statusValue) ||
+                !TryParseHelperBoolean(fields[2], out var usesPathScopedTask) ||
+                !TryParseHelperBoolean(fields[3], out var hasUnverifiedLegacyShortcut))
+                throw new InvalidDataException("The autorun helper returned an invalid inspection result.");
+
             try
             {
-                return await System.Threading.Tasks.Task.Run(operation).ConfigureAwait(false);
+                return new AutoRunInspection(
+                    (AutoRunStatus)statusValue,
+                    usesPathScopedTask,
+                    hasUnverifiedLegacyShortcut,
+                    DecodeHelperField(fields[4]),
+                    DecodeHelperField(fields[5]));
             }
-            finally
+            catch (FormatException ex)
             {
-                AutoRunOperationGate.Release();
+                throw new InvalidDataException(
+                    "The autorun helper returned an invalid encoded inspection result.",
+                    ex);
+            }
+        }
+
+        private static string EncodeHelperField(string value)
+        {
+            return Convert.ToBase64String(Encoding.UTF8.GetBytes(value ?? string.Empty));
+        }
+
+        private static string DecodeHelperField(string value)
+        {
+            return Encoding.UTF8.GetString(Convert.FromBase64String(value ?? string.Empty));
+        }
+
+        private static bool TryParseHelperBoolean(string value, out bool result)
+        {
+            if (value == "1")
+            {
+                result = true;
+                return true;
+            }
+
+            result = false;
+            return value == "0";
+        }
+
+        internal static bool TryRunAutoRunHelperCommandLine(string[] arguments, out int exitCode)
+        {
+            return AutoRunOperationService.TryRunHelperCommandLine(
+                arguments,
+                ExecuteAutoRunHelperOperation,
+                out exitCode);
+        }
+
+        private static AutoRunHelperExecution ExecuteAutoRunHelperOperation(
+            AutoRunHelperOperation operation)
+        {
+            switch (operation)
+            {
+                case AutoRunHelperOperation.Inspect:
+                    return AutoRunHelperExecution.Success(
+                        SerializeAutoRunInspection(InspectAutoRun()));
+                case AutoRunHelperOperation.Enable:
+                    EnableAutoRun();
+                    return AutoRunHelperExecution.Success();
+                case AutoRunHelperOperation.Disable:
+                    DisableAutoRun();
+                    return AutoRunHelperExecution.Success();
+                case AutoRunHelperOperation.DeleteLegacyShortcut:
+                    DeleteLegacyStartupShortcutIfPresent(GetLegacyStartupShortcutPath());
+                    return AutoRunHelperExecution.Success();
+                default:
+                    return AutoRunHelperExecution.Failure(
+                        "The requested autorun helper operation is not supported.");
             }
         }
 
@@ -568,7 +772,7 @@ namespace WireSockUI.Forms
                     };
                     td.Triggers.Add(logonTrigger); // Trigger for this user only
 
-                    var appPath = Application.ExecutablePath;
+                    var appPath = Program.ApplicationLauncherPath;
                     if (!IsExecutablePathTrustedForAutoRun(appPath, out var trustDiagnostic))
                         throw new InvalidOperationException(trustDiagnostic);
 
@@ -828,7 +1032,9 @@ namespace WireSockUI.Forms
         private static bool IsTaskReplaceableByCurrentExecutable(Microsoft.Win32.TaskScheduler.Task task)
         {
             return task != null &&
-                   IsTaskDefinitionReplaceableByExecutable(task.Definition, Application.ExecutablePath);
+                   IsTaskDefinitionReplaceableByExecutable(
+                       task.Definition,
+                       Program.ApplicationLauncherPath);
         }
 
         internal static bool IsTaskScopedToAnotherUser(TaskDefinition definition)
@@ -1064,52 +1270,60 @@ namespace WireSockUI.Forms
 
         internal bool ApplyAutoRunChange()
         {
+            return ApplyAutoRunChangeAsync().GetAwaiter().GetResult();
+        }
+
+        internal async System.Threading.Tasks.Task<bool> ApplyAutoRunChangeAsync()
+        {
             if (!TryCaptureAutoRunChange(out _, out var requestedAutoRun))
                 return true;
 
-            return SetAutoRun(requestedAutoRun);
-        }
-
-        internal System.Threading.Tasks.Task<bool> ApplyAutoRunChangeAsync()
-        {
-            if (!TryCaptureAutoRunChange(out _, out var requestedAutoRun))
-                return System.Threading.Tasks.Task.FromResult(true);
-
-            return RunSerializedAutoRunOperationAsync(
-                () => SetAutoRun(requestedAutoRun));
+            return await ExecuteAutoRunMutationAsync(
+                    requestedAutoRun
+                        ? AutoRunHelperOperation.Enable
+                        : AutoRunHelperOperation.Disable,
+                    _lifetimeCancellation.Token)
+                .ConfigureAwait(false);
         }
 
         internal bool RollbackAutoRunChange()
         {
+            return RollbackAutoRunChangeAsync().GetAwaiter().GetResult();
+        }
+
+        internal async System.Threading.Tasks.Task<bool> RollbackAutoRunChangeAsync()
+        {
             if (!TryCaptureAutoRunChange(out var initialAutoRun, out _))
                 return true;
 
-            return SetAutoRun(initialAutoRun);
+            return await ExecuteAutoRunMutationAsync(
+                    initialAutoRun
+                        ? AutoRunHelperOperation.Enable
+                        : AutoRunHelperOperation.Disable,
+                    _lifetimeCancellation.Token)
+                .ConfigureAwait(false);
         }
 
-        internal System.Threading.Tasks.Task<bool> RollbackAutoRunChangeAsync()
-        {
-            if (!TryCaptureAutoRunChange(out var initialAutoRun, out _))
-                return System.Threading.Tasks.Task.FromResult(true);
-
-            return RunSerializedAutoRunOperationAsync(
-                () => SetAutoRun(initialAutoRun));
-        }
-
-        internal System.Threading.Tasks.Task<bool> CommitAutoRunChangeAsync()
+        internal async System.Threading.Tasks.Task<bool> CommitAutoRunChangeAsync()
         {
             var shortcutPath = GetLegacyStartupShortcutPathForCommit(
                 _hasUnverifiedLegacyShortcut,
                 _legacyShortcutMigrationApproved,
                 _legacyStartupShortcutPath);
             if (shortcutPath == null)
-                return System.Threading.Tasks.Task.FromResult(true);
-
-            return RunSerializedAutoRunOperationAsync(() =>
-            {
-                DeleteLegacyStartupShortcutIfPresent(shortcutPath);
                 return true;
-            });
+
+            if (!string.Equals(
+                    shortcutPath,
+                    GetLegacyStartupShortcutPath(),
+                    StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException(
+                    "The approved legacy Startup shortcut path changed before cleanup.");
+
+            return await ExecuteAutoRunMutationAsync(
+                    AutoRunHelperOperation.DeleteLegacyShortcut,
+                    _lifetimeCancellation.Token)
+                .ConfigureAwait(false);
         }
 
         internal static bool ShouldPreserveLegacyShortcutUntilCommit(
@@ -1184,16 +1398,6 @@ namespace WireSockUI.Forms
                    requestedAutoRun && !initialUsesPathScopedTask;
         }
 
-        private static bool SetAutoRun(bool enabled)
-        {
-            if (enabled)
-                EnableAutoRun();
-            else
-                DisableAutoRun();
-
-            return true;
-        }
-
         private void OnSaveClick(object sender, EventArgs e)
         {
             if (_hasUnverifiedLegacyShortcut &&
@@ -1239,6 +1443,28 @@ namespace WireSockUI.Forms
 
             DialogResult = DialogResult.OK;
             Close();
+        }
+
+        internal void CancelPendingOperations()
+        {
+            try
+            {
+                _lifetimeCancellation.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
+
+        private void DisposeManagedResources()
+        {
+            if (_managedResourcesDisposed)
+                return;
+
+            _managedResourcesDisposed = true;
+            Shown -= OnSettingsShown;
+            CancelPendingOperations();
+            _lifetimeCancellation.Dispose();
         }
     }
 }

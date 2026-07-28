@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using WireSockUI.Native;
@@ -28,11 +29,12 @@ namespace WireSockUI.Forms
 
     internal sealed class NativeOperationResult<T>
     {
-        private NativeOperationResult(bool succeeded, bool timedOut, T value, string diagnostic,
+        private NativeOperationResult(bool succeeded, bool timedOut, bool busy, T value, string diagnostic,
             Task<NativeOperationResult<T>> pendingCompletion)
         {
             Succeeded = succeeded;
             TimedOut = timedOut;
+            Busy = busy;
             Value = value;
             Diagnostic = diagnostic;
             PendingCompletion = pendingCompletion;
@@ -40,24 +42,30 @@ namespace WireSockUI.Forms
 
         public bool Succeeded { get; }
         public bool TimedOut { get; }
+        public bool Busy { get; }
         public T Value { get; }
         public string Diagnostic { get; }
         public Task<NativeOperationResult<T>> PendingCompletion { get; }
 
         public static NativeOperationResult<T> Success(T value)
         {
-            return new NativeOperationResult<T>(true, false, value, null, null);
+            return new NativeOperationResult<T>(true, false, false, value, null, null);
         }
 
         public static NativeOperationResult<T> Failure(string diagnostic, T value = default)
         {
-            return new NativeOperationResult<T>(false, false, value, diagnostic, null);
+            return new NativeOperationResult<T>(false, false, false, value, diagnostic, null);
+        }
+
+        public static NativeOperationResult<T> OperationBusy(string diagnostic)
+        {
+            return new NativeOperationResult<T>(false, false, true, default, diagnostic, null);
         }
 
         public static NativeOperationResult<T> Timeout(string diagnostic,
             Task<NativeOperationResult<T>> pendingCompletion)
         {
-            return new NativeOperationResult<T>(false, true, default, diagnostic, pendingCompletion);
+            return new NativeOperationResult<T>(false, true, false, default, diagnostic, pendingCompletion);
         }
     }
 
@@ -73,6 +81,10 @@ namespace WireSockUI.Forms
     {
         private readonly WireSockManager _manager;
         private readonly INetworkLockApi _networkLockApi;
+        private readonly SemaphoreSlim _nativeOperationGate = new SemaphoreSlim(1, 1);
+        private readonly object _shutdownSyncRoot = new object();
+        private Task<NativeOperationResult<bool>> _shutdownTask;
+        private int _shutdownRequested;
 
         internal TunnelLifecycleController(WireSockManager.LogMessageCallback logMessageCallback = null)
             : this(new WireSockManager(logMessageCallback), new NetworkLockApi())
@@ -147,7 +159,7 @@ namespace WireSockUI.Forms
                 return _manager.TryGetConnected(out var connected, out var diagnostic)
                     ? NativeOperationResult<bool>.Success(connected)
                     : NativeOperationResult<bool>.Failure(diagnostic, false);
-            }, timeoutMilliseconds, "The native tunnel-state query timed out.");
+            }, timeoutMilliseconds, "The native tunnel-state query timed out.", true);
         }
 
         public Task<NativeOperationResult<WgbStats>> GetStateAsync(int timeoutMilliseconds)
@@ -157,7 +169,7 @@ namespace WireSockUI.Forms
                 return _manager.TryGetState(out var state, out var diagnostic)
                     ? NativeOperationResult<WgbStats>.Success(state)
                     : NativeOperationResult<WgbStats>.Failure(diagnostic);
-            }, timeoutMilliseconds, "The native tunnel-statistics query timed out.");
+            }, timeoutMilliseconds, "The native tunnel-statistics query timed out.", true);
         }
 
         public Task<NativeOperationResult<bool>> ApplyKillSwitchAsync(bool enableKillSwitch,
@@ -212,42 +224,60 @@ namespace WireSockUI.Forms
         {
             return RunWithTimeoutAsync(() =>
             {
+                if (_manager.HasTunnelHandle)
+                {
+                    return NativeOperationResult<bool>.Failure(
+                        "WireSock UI refused to reset the global network lock while a tunnel handle remains allocated.",
+                        false);
+                }
+
                 return _networkLockApi.TryReset(out var diagnostic)
                     ? NativeOperationResult<bool>.Success(true)
                     : NativeOperationResult<bool>.Failure(diagnostic, false);
             }, timeoutMilliseconds, "The native network-lock reset timed out.");
         }
 
-        public Task<NativeOperationResult<bool>> ShutdownAsync(int timeoutMilliseconds)
+        public async Task<NativeOperationResult<bool>> ShutdownAsync(int timeoutMilliseconds)
         {
-            return RunWithTimeoutAsync(() =>
+            if (timeoutMilliseconds <= 0) throw new ArgumentOutOfRangeException(nameof(timeoutMilliseconds));
+
+            Task<NativeOperationResult<bool>> shutdownTask;
+            lock (_shutdownSyncRoot)
             {
-                try
+                if (_shutdownTask == null)
                 {
-                    _manager.Disconnect();
-                }
-                finally
-                {
-                    _manager.Dispose();
+                    Volatile.Write(ref _shutdownRequested, 1);
+                    _shutdownTask = RunShutdownWhenAvailableAsync();
                 }
 
-                var handleRemainedAllocated = _manager.HasTunnelHandle;
-                var diagnostic = handleRemainedAllocated
-                    ? "The native tunnel handle remained allocated after shutdown cleanup returned."
-                    : null;
-                if (!TryReleasePreservedNetworkLock(out var networkLockDiagnostic))
-                    diagnostic = AppendDiagnostic(diagnostic, networkLockDiagnostic);
+                shutdownTask = _shutdownTask;
+            }
 
-                if (!string.IsNullOrWhiteSpace(diagnostic))
-                    return NativeOperationResult<bool>.Failure(diagnostic, false);
+            using (var timeoutCancellation = new CancellationTokenSource())
+            {
+                var timeoutTask = Task.Delay(timeoutMilliseconds, timeoutCancellation.Token);
+                if (await Task.WhenAny(shutdownTask, timeoutTask).ConfigureAwait(false) == shutdownTask)
+                {
+                    timeoutCancellation.Cancel();
+                    return await shutdownTask.ConfigureAwait(false);
+                }
+            }
 
-                return NativeOperationResult<bool>.Success(true);
-            }, timeoutMilliseconds, "The native shutdown cleanup timed out.");
+            return NativeOperationResult<bool>.Timeout(
+                "The native shutdown cleanup timed out.",
+                shutdownTask);
         }
 
         internal bool TryReleasePreservedNetworkLock(out string diagnostic)
         {
             diagnostic = null;
+            if (_manager.HasTunnelHandle)
+            {
+                diagnostic =
+                    "WireSock UI refused to reset the global network lock while a tunnel handle remains allocated.";
+                return false;
+            }
+
             if (!_networkLockApi.TryIsActive(out var networkLockActive, out var queryDiagnostic))
             {
                 diagnostic = queryDiagnostic ?? "Unable to query WireSock network lock state.";
@@ -264,27 +294,75 @@ namespace WireSockUI.Forms
             return false;
         }
 
-        private static async Task<NativeOperationResult<T>> RunWithTimeoutAsync<T>(
-            Func<NativeOperationResult<T>> operation, int timeoutMilliseconds, string timeoutDiagnostic)
+        private async Task<NativeOperationResult<T>> RunWithTimeoutAsync<T>(
+            Func<NativeOperationResult<T>> operation, int timeoutMilliseconds, string timeoutDiagnostic,
+            bool skipIfBusy = false)
         {
             if (operation == null) throw new ArgumentNullException(nameof(operation));
             if (timeoutMilliseconds <= 0) throw new ArgumentOutOfRangeException(nameof(timeoutMilliseconds));
+            if (Volatile.Read(ref _shutdownRequested) != 0)
+                return NativeOperationResult<T>.Failure(
+                    "The native operation was rejected because WireSock UI is shutting down.");
 
-            var operationTask = Task.Run(() =>
+            var timeoutBudget = Stopwatch.StartNew();
+            var acquired = skipIfBusy
+                ? await _nativeOperationGate.WaitAsync(0).ConfigureAwait(false)
+                : await _nativeOperationGate.WaitAsync(timeoutMilliseconds).ConfigureAwait(false);
+            if (!acquired)
             {
-                try
+                return NativeOperationResult<T>.OperationBusy(
+                    skipIfBusy
+                        ? "The native operation scheduler is busy; this monitor poll was skipped."
+                        : "The native operation could not start because another native operation is still running.");
+            }
+
+            if (Volatile.Read(ref _shutdownRequested) != 0)
+            {
+                _nativeOperationGate.Release();
+                return NativeOperationResult<T>.Failure(
+                    "The native operation was rejected because WireSock UI is shutting down.");
+            }
+
+            var elapsedMilliseconds = Math.Min(
+                timeoutBudget.ElapsedMilliseconds,
+                int.MaxValue);
+            var remainingMilliseconds =
+                timeoutMilliseconds - (int)elapsedMilliseconds;
+            if (remainingMilliseconds <= 0)
+            {
+                _nativeOperationGate.Release();
+                return NativeOperationResult<T>.OperationBusy(
+                    "The native operation could not start within its execution deadline.");
+            }
+
+            Task<NativeOperationResult<T>> operationTask;
+            try
+            {
+                operationTask = Task.Run(() =>
                 {
-                    return operation();
-                }
-                catch (Exception ex)
-                {
-                    return NativeOperationResult<T>.Failure(ex.Message);
-                }
-            });
+                    try
+                    {
+                        return operation();
+                    }
+                    catch (Exception ex)
+                    {
+                        return NativeOperationResult<T>.Failure(ex.Message);
+                    }
+                    finally
+                    {
+                        _nativeOperationGate.Release();
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                _nativeOperationGate.Release();
+                return NativeOperationResult<T>.Failure(ex.Message);
+            }
 
             using (var timeoutCancellation = new CancellationTokenSource())
             {
-                var timeoutTask = Task.Delay(timeoutMilliseconds, timeoutCancellation.Token);
+                var timeoutTask = Task.Delay(remainingMilliseconds, timeoutCancellation.Token);
                 if (await Task.WhenAny(operationTask, timeoutTask).ConfigureAwait(false) == operationTask)
                 {
                     timeoutCancellation.Cancel();
@@ -293,6 +371,53 @@ namespace WireSockUI.Forms
             }
 
             return NativeOperationResult<T>.Timeout(timeoutDiagnostic, operationTask);
+        }
+
+        private async Task<NativeOperationResult<bool>> RunShutdownWhenAvailableAsync()
+        {
+            await _nativeOperationGate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                return await Task.Run(() =>
+                {
+                    try
+                    {
+                        return PerformShutdown();
+                    }
+                    catch (Exception ex)
+                    {
+                        return NativeOperationResult<bool>.Failure(ex.Message, false);
+                    }
+                }).ConfigureAwait(false);
+            }
+            finally
+            {
+                _nativeOperationGate.Release();
+            }
+        }
+
+        private NativeOperationResult<bool> PerformShutdown()
+        {
+            try
+            {
+                _manager.Disconnect();
+            }
+            finally
+            {
+                _manager.Dispose();
+            }
+
+            var handleRemainedAllocated = _manager.HasTunnelHandle;
+            var diagnostic = handleRemainedAllocated
+                ? "The native tunnel handle remained allocated after shutdown cleanup returned."
+                : null;
+            if (!handleRemainedAllocated &&
+                !TryReleasePreservedNetworkLock(out var networkLockDiagnostic))
+                diagnostic = AppendDiagnostic(diagnostic, networkLockDiagnostic);
+
+            return string.IsNullOrWhiteSpace(diagnostic)
+                ? NativeOperationResult<bool>.Success(true)
+                : NativeOperationResult<bool>.Failure(diagnostic, false);
         }
 
         private static string AppendDiagnostic(string diagnostic, string additionalDiagnostic)

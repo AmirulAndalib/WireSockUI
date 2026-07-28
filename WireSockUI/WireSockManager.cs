@@ -192,6 +192,7 @@ namespace WireSockUI
         private readonly LogPrinter _logPrinter;
         private readonly IWireSockNativeApi _nativeApi;
         private readonly IVirtualAdapterRenamer _virtualAdapterRenamer;
+        private readonly Func<WaitCallback, bool> _queueUserWorkItem;
 
         private const int MaxQueuedLogMessages = 1000;
         private const int DefaultAdapterRenameTimeoutMilliseconds = 6000;
@@ -239,11 +240,13 @@ namespace WireSockUI
 
         internal WireSockManager(IWireSockNativeApi nativeApi, IVirtualAdapterRenamer virtualAdapterRenamer,
             LogMessageCallback logMessageCallback,
-            int adapterRenameTimeoutMilliseconds = DefaultAdapterRenameTimeoutMilliseconds)
+            int adapterRenameTimeoutMilliseconds = DefaultAdapterRenameTimeoutMilliseconds,
+            Func<WaitCallback, bool> queueUserWorkItem = null)
         {
             _nativeApi = nativeApi ?? throw new ArgumentNullException(nameof(nativeApi));
             _virtualAdapterRenamer =
                 virtualAdapterRenamer ?? throw new ArgumentNullException(nameof(virtualAdapterRenamer));
+            _queueUserWorkItem = queueUserWorkItem ?? ThreadPool.QueueUserWorkItem;
             if (adapterRenameTimeoutMilliseconds <= 0)
                 throw new ArgumentOutOfRangeException(nameof(adapterRenameTimeoutMilliseconds));
             _adapterRenameTimeoutMilliseconds = adapterRenameTimeoutMilliseconds;
@@ -879,13 +882,19 @@ namespace WireSockUI
 
         private bool TryQueueAdapterRenameWorker()
         {
-            if (ThreadPool.QueueUserWorkItem(_ => ProcessAdapterRenameQueue()))
-                return true;
+            try
+            {
+                if (_queueUserWorkItem(_ => ProcessAdapterRenameQueue()))
+                    return true;
+            }
+            catch (Exception ex)
+            {
+                PrintLog($"WireSock UI could not schedule the virtual-adapter rename worker: {ex.Message}");
+            }
 
             lock (_adapterRenameQueueSyncRoot)
             {
                 _adapterRenameWorkerRunning = false;
-                _pendingAdapterRename = null;
             }
 
             return false;
@@ -1010,6 +1019,15 @@ namespace WireSockUI
             {
                 lock (_adapterRenameQueueSyncRoot)
                     return _adapterRenameOperationHung;
+            }
+        }
+
+        internal bool AdapterRenamePendingForTests
+        {
+            get
+            {
+                lock (_adapterRenameQueueSyncRoot)
+                    return _pendingAdapterRename != null;
             }
         }
 

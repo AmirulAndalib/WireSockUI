@@ -672,11 +672,32 @@ namespace WireSockUI.Config
 
         private static void CommitNewProfile(string temporaryPath, string destinationPath)
         {
-            if (Profile.ProfilePathExists(destinationPath))
-                throw new IOException($"The destination profile '{destinationPath}' already exists.");
+            var fullDestinationPath = Path.GetFullPath(destinationPath);
+            var destinationDirectory = Path.GetDirectoryName(fullDestinationPath);
+            var destinationFileName = Path.GetFileName(fullDestinationPath);
+            if (string.IsNullOrEmpty(destinationDirectory) ||
+                string.IsNullOrEmpty(destinationFileName))
+            {
+                throw new IOException($"The destination profile '{destinationPath}' is invalid.");
+            }
 
-            MoveFileWithoutReplacingExisting(temporaryPath, destinationPath,
-                $"Unable to create profile '{destinationPath}'.");
+            var entryCount = 0;
+            foreach (var entry in Directory.EnumerateFileSystemEntries(destinationDirectory))
+            {
+                if (++entryCount > Profile.MaxProfileCatalogEntries)
+                    throw new IOException(
+                        $"The profile folder contains more than {Profile.MaxProfileCatalogEntries} entries.");
+                if (string.Equals(
+                        Path.GetFileName(entry),
+                        destinationFileName,
+                        StringComparison.OrdinalIgnoreCase))
+                    throw new IOException(
+                        $"The destination profile '{destinationPath}' already exists; " +
+                        $"it conflicts with existing entry '{entry}'.");
+            }
+
+            MoveFileWithoutReplacingExisting(temporaryPath, fullDestinationPath,
+                $"Unable to create profile '{fullDestinationPath}'.");
         }
 
         private static bool IsManagedProfileTemporaryName(string fileName)

@@ -18,7 +18,9 @@ namespace WireSockUI.Notifications
         private static readonly object IconSyncRoot = new object();
         private static readonly object ActivationSyncRoot = new object();
         private static readonly Lazy<WindowsApplicationContext> ApplicationContext =
-            new Lazy<WindowsApplicationContext>(() => WindowsApplicationContext.FromCurrentProcess());
+            new Lazy<WindowsApplicationContext>(
+                () => WindowsApplicationContext.FromCurrentProcess(
+                    activationExecutablePath: Program.ApplicationLauncherPath));
         private static bool _notificationIconReady;
         private static WeakReference _activationForm;
 

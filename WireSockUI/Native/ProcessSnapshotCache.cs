@@ -11,15 +11,15 @@ namespace WireSockUI.Native
         private static readonly IReadOnlyList<ProcessEntry> EmptySnapshot =
             Array.AsReadOnly(Array.Empty<ProcessEntry>());
         private readonly SemaphoreSlim _enumerationGate = new SemaphoreSlim(1, 1);
-        private readonly Func<CancellationToken, IReadOnlyList<ProcessEntry>> _snapshotFactory;
+        private readonly Func<CancellationToken, IEnumerable<ProcessEntry>> _snapshotFactory;
         private IReadOnlyList<ProcessEntry> _cachedSnapshot;
 
         internal ProcessSnapshotCache()
-            : this(cancellationToken => ProcessList.GetProcessList(cancellationToken).ToArray())
+            : this(cancellationToken => ProcessList.GetProcessList(cancellationToken))
         {
         }
 
-        internal ProcessSnapshotCache(Func<CancellationToken, IReadOnlyList<ProcessEntry>> snapshotFactory)
+        internal ProcessSnapshotCache(Func<CancellationToken, IEnumerable<ProcessEntry>> snapshotFactory)
         {
             _snapshotFactory = snapshotFactory ?? throw new ArgumentNullException(nameof(snapshotFactory));
         }
@@ -35,13 +35,13 @@ namespace WireSockUI.Native
                 if (!forceRefresh && _cachedSnapshot != null)
                     return _cachedSnapshot;
 
-                var snapshot = await Task.Run(
-                        () => _snapshotFactory(cancellationToken),
+                var entries = await Task.Run(
+                        () => (_snapshotFactory(cancellationToken) ?? Enumerable.Empty<ProcessEntry>())
+                            .ToArray(),
                         cancellationToken)
                     .ConfigureAwait(false);
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var entries = snapshot?.ToArray() ?? Array.Empty<ProcessEntry>();
                 _cachedSnapshot = entries.Length == 0
                     ? EmptySnapshot
                     : Array.AsReadOnly(entries);

@@ -13,7 +13,10 @@ namespace WireSockUI.Extensions
                 return false;
 
             var normalized = tag.Trim();
-            if (normalized.StartsWith("v", StringComparison.OrdinalIgnoreCase))
+            const string releasePrefix = "release-v";
+            if (normalized.StartsWith(releasePrefix, StringComparison.OrdinalIgnoreCase))
+                normalized = normalized.Substring(releasePrefix.Length);
+            else if (normalized.StartsWith("v", StringComparison.OrdinalIgnoreCase))
                 normalized = normalized.Substring(1);
 
             var suffixIndex = normalized.IndexOfAny(SuffixDelimiters);
