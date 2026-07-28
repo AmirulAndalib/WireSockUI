@@ -34,6 +34,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 Import-Module (Join-Path $PSScriptRoot 'MsiTest.AccessControl.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'MsiTest.Diagnostics.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'MsiTest.KnownFolders.psm1') -Force
 
 $upgradeCode = '{5C1DDAE5-6681-41BF-B153-AB2952AA6DF1}'
 $applicationDirectoryName = 'WireSock Foundation WireSock UI'
@@ -393,7 +394,7 @@ $x64InstallRoot = [IO.Path]::GetFullPath(
 $x86InstallRoot = [IO.Path]::GetFullPath(
     (Join-Path $programFilesX86 $applicationDirectoryName))
 $commonPrograms = Get-TrustedKnownFolderPath `
-    -FolderId ([Guid]'A77F5D77-2E2B-44C3-A6A2-ABA601054A51') `
+    -FolderId (Get-MsiCommonProgramsFolderId) `
     -Description 'all-users Programs'
 $shortcutPath = [IO.Path]::GetFullPath(
     (Join-Path $commonPrograms 'WireSock UI.lnk'))

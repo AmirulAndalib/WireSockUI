@@ -16,6 +16,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 Import-Module (Join-Path $PSScriptRoot 'MsiTest.AccessControl.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'MsiTest.Diagnostics.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'MsiTest.KnownFolders.psm1') -Force
 $maximumMsiBytes = 2GB - 1
 $maximumValidationMetadataBytes = 4MB
 
@@ -386,7 +387,7 @@ if ($architecture -eq 'arm64') {
 $installRoot = Join-Path $programFilesRoot 'WireSock Foundation WireSock UI'
 $legacyInstallRoot = Join-Path $programFilesRoot 'WireSock UI'
 $commonPrograms = Get-TrustedKnownFolderPath `
-    -FolderId ([Guid]'A77F5D77-2E2B-44C3-A6A2-ABA601054A51') `
+    -FolderId (Get-MsiCommonProgramsFolderId) `
     -Description 'all-users Programs'
 $shortcutPath = Join-Path $commonPrograms 'WireSock UI.lnk'
 $windowsDirectory = Get-TrustedKnownFolderPath `
