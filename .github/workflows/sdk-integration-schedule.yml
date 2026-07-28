@@ -11,7 +11,7 @@ jobs:
   sdk-integration:
     # Load the privileged workflow from the audited immutable implementation
     # commit rather than from a mutable branch or tag.
-    uses: wiresock/WireSockUI/.github/workflows/sdk-integration.yml@c7f13f13ecdba704e68c9fb79241ece5f54a9f85
+    uses: wiresock/WireSockUI/.github/workflows/sdk-integration.yml@0440f3d3a42216a23ce455686ce983b88af62a3e
     with:
       require_sdk_validation: false
-      sdk_workflow_sha: c7f13f13ecdba704e68c9fb79241ece5f54a9f85
+      sdk_workflow_sha: 0440f3d3a42216a23ce455686ce983b88af62a3e
