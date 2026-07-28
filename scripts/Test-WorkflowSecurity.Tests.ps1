@@ -647,7 +647,7 @@ try {
     Invoke-Fixture `
         -Name dangerous-trigger `
         -Workflow ($validWorkflow -replace
-            '(?m)^  push:$',
+            '(?m)^  push:\r?$',
             '  pull_request_target:') `
         -ShouldPass $false
     Invoke-Fixture `
