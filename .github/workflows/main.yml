@@ -158,10 +158,10 @@ jobs:
     needs: authorize-release
     # Load the privileged workflow definition from the audited immutable
     # implementation commit. It validates the caller SHA/ref independently.
-    uses: wiresock/WireSockUI/.github/workflows/sdk-integration.yml@973f14c2084876f9e34c8dfd8c026d62664d2f53
+    uses: wiresock/WireSockUI/.github/workflows/sdk-integration.yml@b769fc2c75da4eac2138c19cd58a0b59dbb2879a
     with:
       require_sdk_validation: true
-      sdk_workflow_sha: 973f14c2084876f9e34c8dfd8c026d62664d2f53
+      sdk_workflow_sha: b769fc2c75da4eac2138c19cd58a0b59dbb2879a
 
   build:
     needs:
@@ -256,7 +256,7 @@ jobs:
       actions: read
       contents: read
       id-token: write
-    uses: wiresock/WireSockUI/.github/workflows/release-signing.yml@973f14c2084876f9e34c8dfd8c026d62664d2f53
+    uses: wiresock/WireSockUI/.github/workflows/release-signing.yml@b769fc2c75da4eac2138c19cd58a0b59dbb2879a
     with:
       trusted_sha: ${{ needs.authorize-release.outputs.trusted_sha }}
       trusted_tag_oid: ${{ needs.authorize-release.outputs.trusted_tag_oid }}

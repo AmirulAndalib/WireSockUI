@@ -22,14 +22,14 @@ $productionWorkflowDigests = @{
     # These are intentionally exact contracts for production control flow. A
     # digest is not an authenticity mechanism; it makes every workflow change
     # explicit and subject to focused trust-boundary review.
-    'ci.yml' = '364376ab7575e47a4c5b8b80c7d68442c120a6c28d1071315347ffe8b0a109ca'
-    'main.yml' = 'd3714e0ad96bdc5b8bbf009ba81607d8376faf112d54ef058846def08a212468'
+    'ci.yml' = '6aa584baac6127632df756199ef5cdce307e5fd834abe6142e9c9ff6f008ef3a'
+    'main.yml' = 'ed9f32b4cd10f9bd67063b6b4e05ab2cb7f37b03288c03aa8fbb1bd275d1e1ba'
     'release-signing.yml' =
         '88b3e309933fdc767ac5aeed1cbd70ce849eab8041529241355f64ed8be3d99c'
     'sdk-contract-drift.yml' =
         '0d47460aa8e978157d397d26d40dcae9a6c300457b2695d104ff158e61cad771'
     'sdk-integration-schedule.yml' =
-        '54f34843c90fe7627f343109f4b15327702025676d25071238b6480c254885d4'
+        '1a1a79505ae0da8ab71288c3a8b67fa6b7b941a353974c798c4dd58fdde6598c'
     'sdk-integration.yml' =
         '64cf1be4a6ffe9779aadabb1fa4c887736e3cd55940291aea92da32c0771b849'
 }
