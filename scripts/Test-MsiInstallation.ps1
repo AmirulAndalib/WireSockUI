@@ -564,7 +564,7 @@ function Invoke-InstalledNativeHostSmoke {
 function Assert-ProtectedEntry {
     param(
         [string]$Path,
-        [switch]$RequireExactApplicationDirectoryAcl,
+        [switch]$RequireExactPayloadAcl,
         [switch]$AllowDeleteOnly
     )
 
@@ -615,36 +615,12 @@ function Assert-ProtectedEntry {
         }
     }
 
-    if ($RequireExactApplicationDirectoryAcl) {
-        if (-not $acl.AreAccessRulesProtected -or $ownerSid -ne 'S-1-5-32-544') {
-            throw 'The application directory does not have the protected Administrators-owned ACL.'
-        }
-
-        $expectedRules = @{
-            'S-1-5-18' = [Security.AccessControl.FileSystemRights]::FullControl
-            'S-1-5-32-544' = [Security.AccessControl.FileSystemRights]::FullControl
-            'S-1-5-32-545' = [Security.AccessControl.FileSystemRights]::ReadAndExecute
-        }
-        $seenExpectedRuleSids =
-            New-Object 'System.Collections.Generic.HashSet[string]' (
-                [StringComparer]::Ordinal)
-        if ($accessRules.Count -ne $expectedRules.Count) {
-            throw "The application directory has $($accessRules.Count) ACL entries; expected $($expectedRules.Count)."
-        }
-        foreach ($rule in $accessRules) {
-            $ruleSid = $rule.IdentityReference.Value
-            if (-not $expectedRules.ContainsKey($ruleSid) -or
-                -not $seenExpectedRuleSids.Add($ruleSid) -or
-                $rule.IsInherited -or
-                $rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
-                (($rule.FileSystemRights -band $expectedRules[$ruleSid]) -ne $expectedRules[$ruleSid]) -or
-                $rule.InheritanceFlags -ne (
-                    [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
-                    [Security.AccessControl.InheritanceFlags]::ObjectInherit) -or
-                $rule.PropagationFlags -ne [Security.AccessControl.PropagationFlags]::None) {
-                throw "The application directory has an unexpected ACL rule for '$ruleSid'."
-            }
-        }
+    if ($RequireExactPayloadAcl -and
+        -not (Test-MsiExactPayloadAccessControl `
+            -Security $acl `
+            -Directory:$entry.PSIsContainer)) {
+        $entryKind = if ($entry.PSIsContainer) { 'directory' } else { 'file' }
+        throw "Installed payload $entryKind '$Path' does not have the exact protected ACL."
     }
 }
 
@@ -772,10 +748,12 @@ try {
         throw 'MSI touched the hostile legacy-path junction or its sentinel target.'
     }
 
-    Assert-ProtectedEntry -Path $installRoot -RequireExactApplicationDirectoryAcl
+    Assert-ProtectedEntry -Path $installRoot -RequireExactPayloadAcl
     $installedEntries = @(Get-ChildItem -LiteralPath $installRoot -Recurse -Force)
     foreach ($entry in $installedEntries) {
-        Assert-ProtectedEntry -Path $entry.FullName
+        Assert-ProtectedEntry `
+            -Path $entry.FullName `
+            -RequireExactPayloadAcl
     }
 
     $expectedFiles = @{}
@@ -872,26 +850,58 @@ try {
                 [string]$expectedCompanion.Sha256) {
             throw "Ordinary MSI repair did not restore companion '$relativePath'."
         }
-        Assert-ProtectedEntry -Path $companionPath
+        Assert-ProtectedEntry `
+            -Path $companionPath `
+            -RequireExactPayloadAcl
     }
-    Assert-ProtectedEntry -Path $installRoot -RequireExactApplicationDirectoryAcl
+    Assert-ProtectedEntry -Path $installRoot -RequireExactPayloadAcl
 
     # Exercise force-all repair too. Remove one payload file and independently
-    # corrupt the root, a root file, a nested directory, and a nested file.
+    # corrupt the root, another root file, and (when present) one nested
+    # directory/file pair selected from the package's validation metadata.
     # Protected child DACLs do not inherit later root changes, so each object
     # class is changed explicitly before MSI is required to normalize it.
-    $repairFilePath = Join-Path $installRoot 'WireSockUI.Managed.dll'
+    [string[]]$rootFileRelativePaths = @(
+        $expectedFiles.Keys |
+            Where-Object { -not ([string]$_).Contains('/') }
+    )
+    [Array]::Sort($rootFileRelativePaths, [StringComparer]::Ordinal)
+    if ($rootFileRelativePaths.Count -lt 2) {
+        throw 'Validation metadata must contain at least two root payload files for independent repair fixtures.'
+    }
+    $repairFilePath =
+        Join-Path $installRoot $rootFileRelativePaths[0]
     Remove-Item -LiteralPath $repairFilePath -Force
     $rootAclRepairFile =
-        Join-Path $installRoot 'Microsoft.Bcl.HashCode.dll'
-    $nestedAclRepairDirectory = Join-Path $installRoot 'de'
-    $nestedAclRepairFile = Join-Path `
-        $nestedAclRepairDirectory `
-        'Microsoft.Win32.TaskScheduler.resources.dll'
+        Join-Path $installRoot $rootFileRelativePaths[1]
     Set-UntrustedWritableAcl -Path $installRoot -Directory
     Set-UntrustedWritableAcl -Path $rootAclRepairFile
-    Set-UntrustedWritableAcl -Path $nestedAclRepairDirectory -Directory
-    Set-UntrustedWritableAcl -Path $nestedAclRepairFile
+
+    [string[]]$nestedFileRelativePaths = @(
+        $expectedFiles.Keys |
+            Where-Object { ([string]$_).Contains('/') }
+    )
+    [Array]::Sort($nestedFileRelativePaths, [StringComparer]::Ordinal)
+    if ($nestedFileRelativePaths.Count -gt 0) {
+        $nestedFileRelativePath = $nestedFileRelativePaths[0]
+        $nestedDirectoryRelativePath = $nestedFileRelativePath.Substring(
+            0,
+            $nestedFileRelativePath.LastIndexOf('/'))
+        $nestedAclRepairDirectory = Join-Path `
+            $installRoot `
+            $nestedDirectoryRelativePath.Replace(
+                '/',
+                [IO.Path]::DirectorySeparatorChar)
+        $nestedAclRepairFile = Join-Path `
+            $installRoot `
+            $nestedFileRelativePath.Replace(
+                '/',
+                [IO.Path]::DirectorySeparatorChar)
+        Set-UntrustedWritableAcl `
+            -Path $nestedAclRepairDirectory `
+            -Directory
+        Set-UntrustedWritableAcl -Path $nestedAclRepairFile
+    }
 
     $repairResult = Invoke-MsiExec -Operation 'force-all-repair' -Arguments @(
         '/fa',
@@ -904,14 +914,16 @@ try {
         -Result $repairResult `
         -Operation 'MSI force-all repair'
 
-    Assert-ProtectedEntry -Path $installRoot -RequireExactApplicationDirectoryAcl
+    Assert-ProtectedEntry -Path $installRoot -RequireExactPayloadAcl
     $repairedEntries = @(Get-ChildItem -LiteralPath $installRoot -Recurse -Force)
     $repairedFiles = @($repairedEntries | Where-Object { -not $_.PSIsContainer })
     if ($repairedFiles.Count -ne $expectedFiles.Count) {
         throw "Repaired image contains $($repairedFiles.Count) files; expected $($expectedFiles.Count)."
     }
     foreach ($file in $repairedEntries) {
-        Assert-ProtectedEntry -Path $file.FullName
+        Assert-ProtectedEntry `
+            -Path $file.FullName `
+            -RequireExactPayloadAcl
         if ($file.PSIsContainer) {
             continue
         }

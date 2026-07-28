@@ -404,7 +404,7 @@ function Assert-NoReparseTree {
 function Assert-ProtectedEntry {
     param(
         [string]$Path,
-        [switch]$RequireExactApplicationDirectoryAcl,
+        [switch]$RequireExactPayloadAcl,
         [switch]$AllowDeleteOnly
     )
 
@@ -452,41 +452,12 @@ function Assert-ProtectedEntry {
         }
     }
 
-    if (-not $RequireExactApplicationDirectoryAcl) {
-        return
-    }
-    if (-not $acl.AreAccessRulesProtected -or
-        $ownerSid -ne 'S-1-5-32-544') {
-        throw 'The application directory does not have the protected Administrators-owned ACL.'
-    }
-
-    $expectedRules = @{
-        'S-1-5-18' = [Security.AccessControl.FileSystemRights]::FullControl
-        'S-1-5-32-544' = [Security.AccessControl.FileSystemRights]::FullControl
-        'S-1-5-32-545' = [Security.AccessControl.FileSystemRights]::ReadAndExecute
-    }
-    $seenExpectedRuleSids =
-        New-Object 'System.Collections.Generic.HashSet[string]' (
-            [StringComparer]::Ordinal)
-    if ($accessRules.Count -ne $expectedRules.Count) {
-        throw "The application directory has $($accessRules.Count) ACL entries; expected $($expectedRules.Count)."
-    }
-    foreach ($rule in $accessRules) {
-        $ruleSid = $rule.IdentityReference.Value
-        if (-not $expectedRules.ContainsKey($ruleSid) -or
-            -not $seenExpectedRuleSids.Add($ruleSid) -or
-            $rule.IsInherited -or
-            $rule.AccessControlType -ne
-                [Security.AccessControl.AccessControlType]::Allow -or
-            (($rule.FileSystemRights -band $expectedRules[$ruleSid]) -ne
-                $expectedRules[$ruleSid]) -or
-            $rule.InheritanceFlags -ne (
-                [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
-                [Security.AccessControl.InheritanceFlags]::ObjectInherit) -or
-            $rule.PropagationFlags -ne
-                [Security.AccessControl.PropagationFlags]::None) {
-            throw "The application directory has an unexpected ACL rule for '$ruleSid'."
-        }
+    if ($RequireExactPayloadAcl -and
+        -not (Test-MsiExactPayloadAccessControl `
+            -Security $acl `
+            -Directory:$entry.PSIsContainer)) {
+        $entryKind = if ($entry.PSIsContainer) { 'directory' } else { 'file' }
+        throw "Installed payload $entryKind '$Path' does not have the exact protected ACL."
     }
 }
 
@@ -510,7 +481,8 @@ function Assert-UnknownMarker {
 function Assert-InstalledImage {
     param(
         [object]$Package,
-        [string[]]$AllowedUnknownRelativePaths = @()
+        [string[]]$AllowedUnknownRelativePaths = @(),
+        [switch]$RequireExactPayloadAcl
     )
 
     $root = Assert-SafeInstallRoot -Path (Get-PackageInstallRoot -Package $Package)
@@ -518,12 +490,16 @@ function Assert-InstalledImage {
         throw "$($Package.Label) did not create expected installation root '$root'."
     }
     Assert-NoReparseTree -Root $root
+    # The baseline packages already harden their application root. Only current
+    # packages contain per-object ACL authoring, so gate exact descendant checks.
     Assert-ProtectedEntry `
         -Path $root `
-        -RequireExactApplicationDirectoryAcl
+        -RequireExactPayloadAcl
     foreach ($directory in @(
             Get-ChildItem -LiteralPath $root -Recurse -Directory -Force)) {
-        Assert-ProtectedEntry -Path $directory.FullName
+        Assert-ProtectedEntry `
+            -Path $directory.FullName `
+            -RequireExactPayloadAcl:$RequireExactPayloadAcl
     }
 
     $expectedFiles = @{}
@@ -561,7 +537,9 @@ function Assert-InstalledImage {
                 [string]$expectedFile.Sha256) {
             throw "$($Package.Label) installed file '$relativePath' differs from validation metadata."
         }
-        Assert-ProtectedEntry -Path $file.FullName
+        Assert-ProtectedEntry `
+            -Path $file.FullName `
+            -RequireExactPayloadAcl:$RequireExactPayloadAcl
     }
 }
 
@@ -612,14 +590,16 @@ function Assert-ShortcutTarget {
 function Assert-PackageInstalled {
     param(
         [object]$Package,
-        [string[]]$AllowedUnknownRelativePaths = @()
+        [string[]]$AllowedUnknownRelativePaths = @(),
+        [switch]$RequireExactPayloadAcl
     )
 
     Assert-ProductInstalled -Package $Package
     Assert-RelatedProducts -ExpectedProductCodes @($Package.ProductCode)
     Assert-InstalledImage `
         -Package $Package `
-        -AllowedUnknownRelativePaths $AllowedUnknownRelativePaths
+        -AllowedUnknownRelativePaths $AllowedUnknownRelativePaths `
+        -RequireExactPayloadAcl:$RequireExactPayloadAcl
     Assert-ShortcutTarget -ExpectedInstallRoot (
         Get-PackageInstallRoot -Package $Package)
 }
@@ -1053,7 +1033,8 @@ try {
     Assert-ProductAbsent -Package $baselineX64Uwp
     Assert-PackageInstalled `
         -Package $currentX64NoUwp `
-        -AllowedUnknownRelativePaths @($unknownMarkerRelativePath)
+        -AllowedUnknownRelativePaths @($unknownMarkerRelativePath) `
+        -RequireExactPayloadAcl
     Assert-UnknownMarker `
         -Path $unknownMarkerPath `
         -ExpectedHash $unknownMarkerHash
@@ -1076,7 +1057,8 @@ try {
     Assert-ProductAbsent -Package $baselineX64Uwp
     Assert-PackageInstalled `
         -Package $currentX64NoUwp `
-        -AllowedUnknownRelativePaths @($unknownMarkerRelativePath)
+        -AllowedUnknownRelativePaths @($unknownMarkerRelativePath) `
+        -RequireExactPayloadAcl
     $postDowngradeSnapshot = Get-InstalledFileSnapshot -Root $x64InstallRoot
     if ($postDowngradeSnapshot -cne $preDowngradeSnapshot) {
         throw 'Rejected downgrade changed the installed file image.'
@@ -1103,7 +1085,8 @@ try {
     $rollbackConflict = $null
     Assert-PackageInstalled `
         -Package $currentX64NoUwp `
-        -AllowedUnknownRelativePaths @($unknownMarkerRelativePath)
+        -AllowedUnknownRelativePaths @($unknownMarkerRelativePath) `
+        -RequireExactPayloadAcl
     $postRollbackSnapshot = Get-InstalledFileSnapshot -Root $x64InstallRoot
     if ($postRollbackSnapshot -cne $preRollbackSnapshot) {
         throw 'Failed same-version flavor upgrade did not restore the prior file image.'
@@ -1120,7 +1103,8 @@ try {
     Assert-ProductAbsent -Package $currentX64NoUwp
     Assert-PackageInstalled `
         -Package $currentX64Uwp `
-        -AllowedUnknownRelativePaths @($unknownMarkerRelativePath)
+        -AllowedUnknownRelativePaths @($unknownMarkerRelativePath) `
+        -RequireExactPayloadAcl
     Assert-UnknownMarker `
         -Path $unknownMarkerPath `
         -ExpectedHash $unknownMarkerHash
@@ -1133,7 +1117,8 @@ try {
     Assert-ProductAbsent -Package $currentX64Uwp
     Assert-PackageInstalled `
         -Package $currentX64NoUwp `
-        -AllowedUnknownRelativePaths @($unknownMarkerRelativePath)
+        -AllowedUnknownRelativePaths @($unknownMarkerRelativePath) `
+        -RequireExactPayloadAcl
     Assert-UnknownMarker `
         -Path $unknownMarkerPath `
         -ExpectedHash $unknownMarkerHash
@@ -1185,7 +1170,9 @@ try {
         -Package $currentX64NoUwp `
         -Operation 'upgrade-x86-to-x64'
     Assert-ProductAbsent -Package $baselineX86NoUwp
-    Assert-PackageInstalled -Package $currentX64NoUwp
+    Assert-PackageInstalled `
+        -Package $currentX64NoUwp `
+        -RequireExactPayloadAcl
     if (Test-FileSystemEntryExists -Path $x86InstallRoot) {
         throw "x86 installation root '$x86InstallRoot' remained after x64 transition."
     }

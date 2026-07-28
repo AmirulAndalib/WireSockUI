@@ -158,7 +158,7 @@
     <!--
       Build-Msi.ps1 generates one explicit component per manifest-bound file.
       Guid="*" plus the directory seed preserves WiX's installed-path component
-      identities, while per-file and per-directory PermissionEx rows make
+      GUIDs, while per-file and per-directory PermissionEx rows make
       force-all repair normalize ACLs that were changed after installation.
     -->
     <?include $(var.PayloadAuthoringPath) ?>

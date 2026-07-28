@@ -65,7 +65,120 @@ function Test-MsiSecurityDescriptorHasNonNullDacl {
     }
 }
 
+function Test-MsiExactPayloadAccessControl {
+    param(
+        [Parameter(Mandatory = $true)]
+        [Security.AccessControl.FileSystemSecurity]$Security,
+
+        [switch]$Directory
+    )
+
+    try {
+        if (-not (Test-MsiSecurityDescriptorHasNonNullDacl `
+                -Security $Security) -or
+            -not $Security.AreAccessRulesProtected -or
+            $Security.GetOwner(
+                [Security.Principal.SecurityIdentifier]).Value -cne
+                'S-1-5-32-544' -or
+            $Security.GetGroup(
+                [Security.Principal.SecurityIdentifier]).Value -cne
+                'S-1-5-18') {
+            return $false
+        }
+
+        $directoryInheritanceFlags =
+            [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+                [Security.AccessControl.InheritanceFlags]::ObjectInherit
+        $expectedRuleSignatures =
+            New-Object 'System.Collections.Generic.HashSet[string]' (
+                [StringComparer]::Ordinal)
+        $expectedRules = @(
+            [pscustomobject]@{
+                Sid = 'S-1-5-18'
+                Rights = 0x001f01ffL
+                Inheritance = if ($Directory) {
+                    $directoryInheritanceFlags
+                }
+                else {
+                    [Security.AccessControl.InheritanceFlags]::None
+                }
+                Propagation =
+                    [Security.AccessControl.PropagationFlags]::None
+            },
+            [pscustomobject]@{
+                Sid = 'S-1-5-32-544'
+                Rights = 0x001f01ffL
+                Inheritance = if ($Directory) {
+                    $directoryInheritanceFlags
+                }
+                else {
+                    [Security.AccessControl.InheritanceFlags]::None
+                }
+                Propagation =
+                    [Security.AccessControl.PropagationFlags]::None
+            },
+            [pscustomobject]@{
+                Sid = 'S-1-5-32-545'
+                # Windows Installer maps GR | GX to FILE_GENERIC_READ |
+                # FILE_GENERIC_EXECUTE while retaining the authored
+                # inheritance flags on directory ACEs.
+                Rights = 0x001200a9L
+                Inheritance = if ($Directory) {
+                    $directoryInheritanceFlags
+                }
+                else {
+                    [Security.AccessControl.InheritanceFlags]::None
+                }
+                Propagation =
+                    [Security.AccessControl.PropagationFlags]::None
+            }
+        )
+        foreach ($expectedRule in $expectedRules) {
+            $signature = '{0}|{1:X8}|{2}|{3}' -f
+                $expectedRule.Sid,
+                [Int64]$expectedRule.Rights,
+                [int]$expectedRule.Inheritance,
+                [int]$expectedRule.Propagation
+            if (-not $expectedRuleSignatures.Add($signature)) {
+                return $false
+            }
+        }
+
+        $rules = @(
+            $Security.GetAccessRules(
+                $true,
+                $true,
+                [Security.Principal.SecurityIdentifier])
+        )
+        if ($rules.Count -ne $expectedRuleSignatures.Count) {
+            return $false
+        }
+
+        foreach ($rule in $rules) {
+            $sid = $rule.IdentityReference.Value
+            [Int64]$normalizedRights =
+                [Int64]$rule.FileSystemRights -band 0xffffffffL
+            $signature = '{0}|{1:X8}|{2}|{3}' -f
+                $sid,
+                $normalizedRights,
+                [int]$rule.InheritanceFlags,
+                [int]$rule.PropagationFlags
+            if ($rule.IsInherited -or
+                $rule.AccessControlType -ne
+                    [Security.AccessControl.AccessControlType]::Allow -or
+                -not $expectedRuleSignatures.Remove($signature)) {
+                return $false
+            }
+        }
+        return $expectedRuleSignatures.Count -eq 0
+    }
+    catch {
+        return $false
+    }
+}
+
 Export-ModuleMember -Function @(
+    'Test-MsiExactPayloadAccessControl',
     'Test-MsiReplacementCapableFileSystemRights',
     'Test-MsiSecurityDescriptorHasNonNullDacl',
     'Test-MsiWriteCapableFileSystemRights'

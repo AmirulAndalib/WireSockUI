@@ -110,11 +110,22 @@ function Get-PayloadAuthoring {
         [string]$Architecture
     )
 
+    $runtimeFileByPath =
+        New-Object 'System.Collections.Generic.Dictionary[string,object]' (
+            [StringComparer]::OrdinalIgnoreCase)
+    foreach ($runtimeFile in $RuntimeFiles) {
+        $manifestPath = [string]$runtimeFile.ManifestPath
+        if ([string]::IsNullOrEmpty($manifestPath) -or
+            $runtimeFileByPath.ContainsKey($manifestPath)) {
+            throw "The MSI payload authoring contains an empty or case-insensitively duplicated path '$manifestPath'."
+        }
+        $runtimeFileByPath.Add($manifestPath, $runtimeFile)
+    }
+    [string[]]$sortedManifestPaths = @($runtimeFileByPath.Keys)
+    [Array]::Sort($sortedManifestPaths, [StringComparer]::Ordinal)
     $sortedRuntimeFiles = @(
-        $RuntimeFiles |
-            Sort-Object `
-                -Property @{ Expression = { $_.ManifestPath.ToUpperInvariant() } },
-                          @{ Expression = { $_.ManifestPath } }
+        $sortedManifestPaths |
+            ForEach-Object { $runtimeFileByPath[$_] }
     )
     $payloadFiles = @(
         $sortedRuntimeFiles |
@@ -128,8 +139,8 @@ function Get-PayloadAuthoring {
         throw 'The MSI payload authoring has no files outside the native-host component.'
     }
 
-    $directoryPaths =
-        New-Object 'System.Collections.Generic.HashSet[string]' (
+    $directoryPathByInsensitivePath =
+        New-Object 'System.Collections.Generic.Dictionary[string,string]' (
             [StringComparer]::OrdinalIgnoreCase)
     foreach ($runtimeFile in $sortedRuntimeFiles) {
         $segments = $runtimeFile.ManifestPath.Split('/')
@@ -139,16 +150,49 @@ function Get-PayloadAuthoring {
             $directoryPath = [string]::Join(
                 '/',
                 $segments[0..($segmentCount - 1)])
-            [void]$directoryPaths.Add($directoryPath)
+            $knownDirectoryPath = $null
+            if ($directoryPathByInsensitivePath.TryGetValue(
+                    $directoryPath,
+                    [ref]$knownDirectoryPath)) {
+                if ($knownDirectoryPath -cne $directoryPath) {
+                    throw "Payload paths use inconsistent casing for directory '$knownDirectoryPath' and '$directoryPath'."
+                }
+                continue
+            }
+            $directoryPathByInsensitivePath.Add(
+                $directoryPath,
+                $directoryPath)
         }
     }
-    $sortedDirectoryPaths = @(
-        $directoryPaths |
-            Sort-Object `
-                -Property @{ Expression = { ($_.Split('/')).Count } },
-                          @{ Expression = { $_.ToUpperInvariant() } },
-                          @{ Expression = { $_ } }
-    )
+    $directoryPathsByDepth =
+        New-Object (
+            'System.Collections.Generic.SortedDictionary[' +
+            'int,System.Collections.Generic.List[string]]')
+    foreach ($directoryPath in
+        $directoryPathByInsensitivePath.Values) {
+        $depth = $directoryPath.Split('/').Count
+        $pathsAtDepth = $null
+        if (-not $directoryPathsByDepth.TryGetValue(
+                $depth,
+                [ref]$pathsAtDepth)) {
+            $pathsAtDepth =
+                New-Object 'System.Collections.Generic.List[string]'
+            $directoryPathsByDepth.Add($depth, $pathsAtDepth)
+        }
+        $pathsAtDepth.Add($directoryPath)
+    }
+    $sortedDirectoryPaths =
+        New-Object 'System.Collections.Generic.List[string]'
+    foreach ($depth in $directoryPathsByDepth.Keys) {
+        [string[]]$sortedPathsAtDepth =
+            $directoryPathsByDepth[$depth].ToArray()
+        [Array]::Sort(
+            $sortedPathsAtDepth,
+            [StringComparer]::Ordinal)
+        foreach ($directoryPath in $sortedPathsAtDepth) {
+            $sortedDirectoryPaths.Add($directoryPath)
+        }
+    }
 
     $directorySddl =
         'O:BAG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;GRGX;;;BU)'
@@ -557,7 +601,59 @@ function Test-PayloadManifestParserContract {
     }
 }
 
+function Test-PayloadAuthoringContract {
+    [object[]]$runtimeFiles = @(
+        [pscustomobject]@{ ManifestPath = 'WireSockUI.exe' },
+        [pscustomobject]@{ ManifestPath = 'WireSockUI.exe.config' },
+        [pscustomobject]@{ ManifestPath = 'I/a&ampersand.dll' },
+        [pscustomobject]@{ ManifestPath = ([string][char]0x0131) + '/b.dll' }
+    )
+    $forwardAuthoring = Get-PayloadAuthoring `
+        -RuntimeFiles $runtimeFiles `
+        -Architecture 'x64'
+    [Array]::Reverse($runtimeFiles)
+    $reverseAuthoring = Get-PayloadAuthoring `
+        -RuntimeFiles $runtimeFiles `
+        -Architecture 'x64'
+    $dotlessIDirectory = 'Subdirectory="' + [char]0x0131 + '"'
+    if ($forwardAuthoring -cne $reverseAuthoring -or
+        $forwardAuthoring.IndexOf(
+            'Subdirectory="I"',
+            [StringComparison]::Ordinal) -lt 0 -or
+        $forwardAuthoring.IndexOf(
+            'Subdirectory="I"',
+            [StringComparison]::Ordinal) -gt
+            $forwardAuthoring.IndexOf(
+                $dotlessIDirectory,
+                [StringComparison]::Ordinal) -or
+        -not $forwardAuthoring.Contains(
+            'I\a&amp;ampersand.dll')) {
+        throw 'Payload authoring is not input-order independent, ordinally ordered, and XML escaped.'
+    }
+
+    $inconsistentCaseFiles = @(
+        [pscustomobject]@{ ManifestPath = 'WireSockUI.exe' },
+        [pscustomobject]@{ ManifestPath = 'WireSockUI.exe.config' },
+        [pscustomobject]@{ ManifestPath = 'Locale/a.dll' },
+        [pscustomobject]@{ ManifestPath = 'locale/b.dll' }
+    )
+    $rejected = $false
+    try {
+        Get-PayloadAuthoring `
+            -RuntimeFiles $inconsistentCaseFiles `
+            -Architecture 'x64' |
+            Out-Null
+    }
+    catch {
+        $rejected = $true
+    }
+    if (-not $rejected) {
+        throw 'Payload authoring accepted inconsistent directory-prefix casing.'
+    }
+}
+
 Test-PayloadManifestParserContract
+Test-PayloadAuthoringContract
 
 $normalizedArchitecture = Get-NormalizedArchitecture -Value $Platform
 $Flavor = $Flavor.ToLowerInvariant()
