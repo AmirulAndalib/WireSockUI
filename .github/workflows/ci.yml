@@ -119,9 +119,9 @@ jobs:
     needs:
       - sdk-contract
       - test
-    uses: wiresock/WireSockUI/.github/workflows/sdk-integration.yml@b769fc2c75da4eac2138c19cd58a0b59dbb2879a
+    uses: wiresock/WireSockUI/.github/workflows/sdk-integration.yml@ce5fd8f63f9b99e43f3bb230f8a4ee0850d5ad32
     with:
-      sdk_workflow_sha: b769fc2c75da4eac2138c19cd58a0b59dbb2879a
+      sdk_workflow_sha: ce5fd8f63f9b99e43f3bb230f8a4ee0850d5ad32
 
   native-host-smoke:
     name: native-host-smoke (${{ matrix.platform }})
