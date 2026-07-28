@@ -1,3 +1,5 @@
+#requires -Version 7.0
+
 [CmdletBinding()]
 param()
 
@@ -56,6 +58,31 @@ $productionMainWorkflow = Get-Content `
         ) '.github\workflows\main.yml') `
     -Raw `
     -Encoding UTF8
+$productionWorkflowDirectory = Join-Path (
+    Split-Path -Parent $PSScriptRoot
+) '.github\workflows'
+$productionCiWorkflow = Get-Content `
+    -LiteralPath (Join-Path $productionWorkflowDirectory 'ci.yml') `
+    -Raw `
+    -Encoding UTF8
+$productionSdkContractDriftWorkflow = Get-Content `
+    -LiteralPath (
+        Join-Path $productionWorkflowDirectory 'sdk-contract-drift.yml') `
+    -Raw `
+    -Encoding UTF8
+$productionSdkScheduleWorkflow = Get-Content `
+    -LiteralPath (
+        Join-Path $productionWorkflowDirectory 'sdk-integration-schedule.yml') `
+    -Raw `
+    -Encoding UTF8
+$productionPinMatch = [regex]::Match(
+    $productionMainWorkflow,
+    'wiresock/WireSockUI/\.github/workflows/' +
+        '(?:sdk-integration|release-signing)\.yml@(?<sha>[0-9a-f]{40})')
+if (-not $productionPinMatch.Success) {
+    throw 'The production workflow fixture has no immutable implementation pin.'
+}
+$productionPinnedRevision = $productionPinMatch.Groups['sha'].Value
 $privilegedCallerPattern =
     '(?m)(uses:\s+wiresock/WireSockUI/\.github/workflows/' +
     '(?:sdk-integration|release-signing)\.yml)@[0-9a-f]{40}'
@@ -84,7 +111,25 @@ function Invoke-Fixture {
         [string] $ReleaseSigningWorkflow,
 
         [Parameter()]
-        [string] $SdkIntegrationWorkflow
+        [string] $SdkIntegrationWorkflow,
+
+        [Parameter()]
+        [bool] $RequireProductionContracts = $false,
+
+        [Parameter()]
+        [string] $AdditionalWorkflowName,
+
+        [Parameter()]
+        [string] $AdditionalWorkflow,
+
+        [Parameter()]
+        [string] $AuxiliaryPinReplacement,
+
+        [Parameter()]
+        [string] $ExpectedErrorPattern,
+
+        [Parameter()]
+        [hashtable] $AuxiliaryWorkflowOverrides
     )
 
     $fixture = Join-Path $temporaryRoot $Name
@@ -106,17 +151,118 @@ function Invoke-Fixture {
             -Value $SdkIntegrationWorkflow `
             -Encoding utf8
     }
+    if ($RequireProductionContracts) {
+        foreach ($workflowName in @(
+                'ci.yml',
+                'sdk-contract-drift.yml',
+                'sdk-integration-schedule.yml')) {
+            $sourcePath = Join-Path `
+                $productionWorkflowDirectory `
+                $workflowName
+            $destinationPath = Join-Path $fixture $workflowName
+            $hasOverride =
+                $null -ne $AuxiliaryWorkflowOverrides -and
+                $AuxiliaryWorkflowOverrides.ContainsKey($workflowName)
+            if (-not $hasOverride -and
+                [string]::IsNullOrEmpty($AuxiliaryPinReplacement)) {
+                Copy-Item `
+                    -LiteralPath $sourcePath `
+                    -Destination $destinationPath
+            }
+            else {
+                $auxiliaryWorkflow = if ($hasOverride) {
+                    [string]$AuxiliaryWorkflowOverrides[$workflowName]
+                }
+                else {
+                    Get-Content `
+                        -LiteralPath $sourcePath `
+                        -Raw `
+                        -Encoding UTF8
+                }
+                if (-not [string]::IsNullOrEmpty(
+                        $AuxiliaryPinReplacement)) {
+                    $auxiliaryWorkflow = $auxiliaryWorkflow.Replace(
+                        $productionPinnedRevision,
+                        $AuxiliaryPinReplacement)
+                }
+                Set-Content `
+                    -LiteralPath $destinationPath `
+                    -Value $auxiliaryWorkflow `
+                    -Encoding utf8
+            }
+        }
+    }
+    if (-not [string]::IsNullOrEmpty($AdditionalWorkflowName)) {
+        Set-Content `
+            -LiteralPath (Join-Path $fixture $AdditionalWorkflowName) `
+            -Value $AdditionalWorkflow `
+            -Encoding utf8
+    }
 
     $failed = $false
+    $failureMessage = ''
     try {
-        & $validator -WorkflowDirectory $fixture | Out-Null
+        & $validator `
+            -WorkflowDirectory $fixture `
+            -RequireProductionContracts:$RequireProductionContracts |
+            Out-Null
     }
     catch {
         $failed = $true
+        $failureMessage = $_.Exception.Message
     }
     if ($failed -eq $ShouldPass) {
         throw "Workflow security fixture '$Name' produced the wrong result."
     }
+    if (-not $ShouldPass -and
+        -not [string]::IsNullOrEmpty($ExpectedErrorPattern) -and
+        $failureMessage -notmatch $ExpectedErrorPattern) {
+        throw (
+            "Workflow security fixture '$Name' failed for an unexpected " +
+            "reason: $failureMessage")
+    }
+}
+
+function Invoke-ProductionContractFixture {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Name,
+
+        [Parameter()]
+        [string] $MainWorkflow = $productionMainWorkflow,
+
+        [Parameter()]
+        [string] $ReleaseWorkflow = $releaseSigningWorkflow,
+
+        [Parameter()]
+        [string] $SdkWorkflow = $sdkIntegrationWorkflow,
+
+        [Parameter()]
+        [string] $AdditionalWorkflowName,
+
+        [Parameter()]
+        [string] $AdditionalWorkflow,
+
+        [Parameter()]
+        [string] $AuxiliaryPinReplacement,
+
+        [Parameter()]
+        [hashtable] $AuxiliaryWorkflowOverrides
+    )
+
+    Invoke-Fixture `
+        -Name $Name `
+        -Workflow $MainWorkflow `
+        -ReleaseSigningWorkflow $ReleaseWorkflow `
+        -SdkIntegrationWorkflow $SdkWorkflow `
+        -RequireProductionContracts $true `
+        -AdditionalWorkflowName $AdditionalWorkflowName `
+        -AdditionalWorkflow $AdditionalWorkflow `
+        -AuxiliaryPinReplacement $AuxiliaryPinReplacement `
+        -AuxiliaryWorkflowOverrides $AuxiliaryWorkflowOverrides `
+        -ExpectedErrorPattern (
+            '(?i)(?:production workflow|audited control contract)') `
+        -ShouldPass $false
 }
 
 try {
@@ -136,13 +282,258 @@ try {
         -Workflow $productionMainWorkflow `
         -ReleaseSigningWorkflow $releaseSigningWorkflow `
         -SdkIntegrationWorkflow $sdkIntegrationWorkflow `
+        -RequireProductionContracts $true `
         -ShouldPass $true
     Invoke-Fixture `
         -Name mutable-production-privileged-caller `
         -Workflow $mutableProductionMainWorkflow `
         -ReleaseSigningWorkflow $releaseSigningWorkflow `
         -SdkIntegrationWorkflow $sdkIntegrationWorkflow `
+        -RequireProductionContracts $true `
         -ShouldPass $false
+    Invoke-ProductionContractFixture `
+        -Name production-sdk-validation-opt-out `
+        -MainWorkflow $productionMainWorkflow.Replace(
+            '      require_sdk_validation: true',
+            '      require_sdk_validation: false')
+    Invoke-ProductionContractFixture `
+        -Name production-contract-detects-unmodeled-change `
+        -MainWorkflow (
+            $productionMainWorkflow +
+            "`n# Any production workflow change requires contract review.")
+    Invoke-ProductionContractFixture `
+        -Name production-contract-locks-release-workflow `
+        -ReleaseWorkflow (
+            $releaseSigningWorkflow +
+            "`n# Any production workflow change requires contract review.")
+    Invoke-ProductionContractFixture `
+        -Name production-contract-locks-sdk-workflow `
+        -SdkWorkflow (
+            $sdkIntegrationWorkflow +
+            "`n# Any production workflow change requires contract review.")
+    Invoke-ProductionContractFixture `
+        -Name production-contract-locks-ci-workflow `
+        -AuxiliaryWorkflowOverrides @{
+            'ci.yml' = (
+                $productionCiWorkflow +
+                "`n# Any production workflow change requires contract review.")
+        }
+    Invoke-ProductionContractFixture `
+        -Name production-contract-locks-sdk-drift-workflow `
+        -AuxiliaryWorkflowOverrides @{
+            'sdk-contract-drift.yml' = (
+                $productionSdkContractDriftWorkflow +
+                "`n# Any production workflow change requires contract review.")
+        }
+    Invoke-ProductionContractFixture `
+        -Name production-contract-locks-sdk-schedule-workflow `
+        -AuxiliaryWorkflowOverrides @{
+            'sdk-integration-schedule.yml' = (
+                $productionSdkScheduleWorkflow +
+                "`n# Any production workflow change requires contract review.")
+        }
+    Invoke-ProductionContractFixture `
+        -Name production-contract-rejects-extra-workflow `
+        -AdditionalWorkflowName 'unreviewed.yml' `
+        -AdditionalWorkflow $validWorkflow
+    $unapprovedRevision = '1111111111111111111111111111111111111111'
+    Invoke-ProductionContractFixture `
+        -Name production-contract-rejects-coordinated-pin-change `
+        -MainWorkflow $productionMainWorkflow.Replace(
+            $productionPinnedRevision,
+            $unapprovedRevision) `
+        -AuxiliaryPinReplacement $unapprovedRevision
+    Invoke-ProductionContractFixture `
+        -Name production-build-drops-sdk-dependency `
+        -MainWorkflow ([regex]::Replace(
+            $productionMainWorkflow,
+            '(?m)^      - sdk-integration\r?\n',
+            '',
+            1))
+    Invoke-ProductionContractFixture `
+        -Name production-sign-drops-build-dependency `
+        -MainWorkflow ([regex]::Replace(
+            $productionMainWorkflow,
+            '(?m)(^  sign:\r?\n(?:.*\r?\n){0,5}?)^      - build\r?\n',
+            '$1',
+            1))
+    Invoke-ProductionContractFixture `
+        -Name production-package-drops-sign-dependency `
+        -MainWorkflow ([regex]::Replace(
+            $productionMainWorkflow,
+            '(?m)(^  package:\r?\n(?:.*\r?\n){0,5}?)^      - sign\r?\n',
+            '$1',
+            1))
+    Invoke-ProductionContractFixture `
+        -Name production-upload-runs-after-failure `
+        -MainWorkflow $productionMainWorkflow.Replace(
+            '  upload-release:
+    if: ${{ success() }}',
+            '  upload-release:
+    if: ${{ always() }}')
+    Invoke-ProductionContractFixture `
+        -Name production-upload-drops-attestation-dependency `
+        -MainWorkflow ([regex]::Replace(
+            $productionMainWorkflow,
+            '(?m)(^  upload-release:\r?\n(?:.*\r?\n){0,5}?)^      - attest\r?\n',
+            '$1',
+            1))
+    Invoke-ProductionContractFixture `
+        -Name production-verification-job-skipped `
+        -MainWorkflow $productionMainWorkflow.Replace(
+            '  verify-release:
+    if: ${{ success() }}',
+            '  verify-release:
+    if: ${{ false }}')
+    Invoke-ProductionContractFixture `
+        -Name production-publication-error-suppressed `
+        -MainWorkflow $productionMainWorkflow.Replace(
+            '      - name: Publish or safely resume immutable release
+        shell: pwsh',
+            '      - name: Publish or safely resume immutable release
+        continue-on-error: true
+        shell: pwsh')
+    Invoke-ProductionContractFixture `
+        -Name production-repository-policy-short-circuited `
+        -MainWorkflow $productionMainWorkflow.Replace(
+            '        run: >
+          ./scripts/Test-ReleaseRepositoryPolicy.ps1',
+            '        run: |
+          return
+          ./scripts/Test-ReleaseRepositoryPolicy.ps1')
+    Invoke-ProductionContractFixture `
+        -Name production-release-environment-rebound `
+        -ReleaseWorkflow $releaseSigningWorkflow.Replace(
+            '    environment: release-signing',
+            '    environment: release-publish')
+    Invoke-ProductionContractFixture `
+        -Name production-release-job-skipped `
+        -ReleaseWorkflow $releaseSigningWorkflow.Replace(
+            '  sign:
+    runs-on:',
+            '  sign:
+    if: ${{ false }}
+    runs-on:')
+    Invoke-ProductionContractFixture `
+        -Name production-release-job-error-suppressed `
+        -ReleaseWorkflow $releaseSigningWorkflow.Replace(
+            '  sign:
+    runs-on:',
+            '  sign:
+    continue-on-error: true
+    runs-on:')
+    Invoke-ProductionContractFixture `
+        -Name production-release-context-rebound `
+        -ReleaseWorkflow $releaseSigningWorkflow.Replace(
+            '          CALLER_SHA: ${{ github.sha }}',
+            '          CALLER_SHA: ${{ inputs.trusted_sha }}')
+    Invoke-ProductionContractFixture `
+        -Name production-release-authorization-short-circuited `
+        -ReleaseWorkflow ([regex]::Replace(
+            $releaseSigningWorkflow,
+            '(?m)(^      - name: Validate reusable-workflow release identity' +
+                '\r?\n(?:.*\r?\n){0,15}?^        run: \|\r?\n)',
+            "`$1          return`n",
+            1))
+    Invoke-ProductionContractFixture `
+        -Name production-sdk-configuration-skipped `
+        -SdkWorkflow $sdkIntegrationWorkflow.Replace(
+            '  configuration:
+    runs-on:',
+            '  configuration:
+    if: ${{ false }}
+    runs-on:')
+    Invoke-ProductionContractFixture `
+        -Name production-sdk-runner-policy-error-suppressed `
+        -SdkWorkflow $sdkIntegrationWorkflow.Replace(
+            '  runner-policy:
+    needs:',
+            '  runner-policy:
+    continue-on-error: true
+    needs:')
+    Invoke-ProductionContractFixture `
+        -Name production-sdk-smoke-drops-policy-dependency `
+        -SdkWorkflow ([regex]::Replace(
+            $sdkIntegrationWorkflow,
+            '(?m)(^  elevated-sdk-smoke:\r?\n(?:.*\r?\n){0,5}?)' +
+                '^      - runner-policy\r?\n',
+            '$1',
+            1))
+    Invoke-ProductionContractFixture `
+        -Name production-sdk-matrix-loses-arm64 `
+        -SdkWorkflow ([regex]::Replace(
+            $sdkIntegrationWorkflow,
+            '(?ms)^          - platform: ARM64\r?\n' +
+                '.*?(?=^    runs-on:)',
+            '',
+            1))
+    Invoke-ProductionContractFixture `
+        -Name production-sdk-context-rebound `
+        -SdkWorkflow $sdkIntegrationWorkflow.Replace(
+            '          SDK_WORKFLOW_SHA: ${{ inputs.sdk_workflow_sha }}',
+            '          SDK_WORKFLOW_SHA: ${{ job.workflow_sha }}')
+    Invoke-ProductionContractFixture `
+        -Name production-sdk-authorization-short-circuited `
+        -SdkWorkflow $sdkIntegrationWorkflow.Replace(
+            '      - name: Authorize trusted candidate revision
+        id: authorize',
+            '      - name: Authorize trusted candidate revision
+        id: authorize
+        if: ${{ false }}')
+    Invoke-ProductionContractFixture `
+        -Name production-sdk-policy-invocation-swallowed `
+        -SdkWorkflow $sdkIntegrationWorkflow.Replace(
+            '        run: >
+          ./.trusted-sdk-tooling/scripts/Test-SdkRunnerPolicy.ps1',
+            '        run: |
+          try {
+            ./.trusted-sdk-tooling/scripts/Test-SdkRunnerPolicy.ps1
+          }
+          catch {
+          }')
+    $unsignedReleaseWorkflow = $releaseSigningWorkflow.Replace(
+        '      - name: Sign native bootstraps with Azure Artifact Signing',
+        '      - name: Sign native bootstraps with Azure Artifact Signing
+        if: ${{ false }}').Replace(
+        '      - name: Sign MSI packages with Azure Artifact Signing',
+        '      - name: Sign MSI packages with Azure Artifact Signing
+        if: ${{ false }}').Replace(
+        '      - name: Verify exact signed bootstrap scope
+        shell: pwsh
+        run: |',
+        '      - name: Verify exact signed bootstrap scope
+        shell: pwsh
+        run: |
+          return').Replace(
+        '      - name: Verify exact signed MSI scope and embedded payloads
+        shell: pwsh
+        run: |',
+        '      - name: Verify exact signed MSI scope and embedded payloads
+        shell: pwsh
+        run: |
+          return')
+    $unsignedPublicationMainWorkflow = $productionMainWorkflow.Replace(
+        '      - name: Reverify signed native bootstraps
+        shell: pwsh
+        run: |',
+        '      - name: Reverify signed native bootstraps
+        shell: pwsh
+        run: |
+          return').Replace(
+        '              -RequireSignature',
+        '')
+    $unsignedPublicationMainWorkflow = [regex]::Replace(
+        $unsignedPublicationMainWorkflow,
+        '(?ms)^          \./scripts/Test-ReleaseSignature\.ps1 `\r?\n' +
+            '            -FilePath \$msis\.FullName `\r?\n' +
+            '            -ExpectedSignerSubject .*?' +
+            "^          }\r?\n",
+        '',
+        1)
+    Invoke-ProductionContractFixture `
+        -Name production-unsigned-publication-chain `
+        -MainWorkflow $unsignedPublicationMainWorkflow `
+        -ReleaseWorkflow $unsignedReleaseWorkflow
     Invoke-Fixture `
         -Name candidate-release-validator `
         -Workflow $validWorkflow `

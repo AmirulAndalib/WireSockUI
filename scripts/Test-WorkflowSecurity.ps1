@@ -1,9 +1,14 @@
+#requires -Version 7.0
+
 [CmdletBinding()]
 param(
     [Parameter()]
     [ValidateNotNullOrEmpty()]
     [string] $WorkflowDirectory = (
-        Join-Path (Split-Path -Parent $PSScriptRoot) '.github\workflows')
+        Join-Path (Split-Path -Parent $PSScriptRoot) '.github\workflows'),
+
+    [Parameter()]
+    [switch] $RequireProductionContracts
 )
 
 $ErrorActionPreference = 'Stop'
@@ -13,6 +18,21 @@ $maximumWorkflowCount = 32
 $maximumWorkflowBytes = 1MB
 $maximumAggregateBytes = 4MB
 $totalUsesCount = 0
+$productionWorkflowDigests = @{
+    # These are intentionally exact contracts for production control flow. A
+    # digest is not an authenticity mechanism; it makes every workflow change
+    # explicit and subject to focused trust-boundary review.
+    'ci.yml' = '5e03ba79c4dd1a21e28f46e3f1138428a372883e405f730a35dd9c8e12cc788f'
+    'main.yml' = '0a1c3cb95ffae0cd2703b8e24bb92da8376fbfdd85ef54821e657bcf5e758ed8'
+    'release-signing.yml' =
+        '88b3e309933fdc767ac5aeed1cbd70ce849eab8041529241355f64ed8be3d99c'
+    'sdk-contract-drift.yml' =
+        '0d47460aa8e978157d397d26d40dcae9a6c300457b2695d104ff158e61cad771'
+    'sdk-integration-schedule.yml' =
+        '9ed49c9853ab1204d79a6d5e4ac0e60987b2e6dad7e366cd8f3519ea55e35457'
+    'sdk-integration.yml' =
+        '64cf1be4a6ffe9779aadabb1fa4c887736e3cd55940291aea92da32c0771b849'
+}
 $forbiddenShellSourcePattern = (
     '(?i)(?:' +
     '\b(?:pwsh|powershell)(?:\.exe)?\b|' +
@@ -38,6 +58,27 @@ foreach ($value in @(
         'wiresock/WireSockUI/.github/workflows/release-signing.yml',
         'wiresock/WireSockUI/.github/workflows/sdk-integration.yml')) {
     [void]$allowedUses.Add($value)
+}
+
+function Get-ProductionWorkflowDigest {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $WorkflowText
+    )
+
+    $normalized = $WorkflowText -replace '\r\n?', "`n"
+    $normalized = $normalized.TrimEnd([char[]]"`r`n") + "`n"
+
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [Text.Encoding]::UTF8.GetBytes($normalized)
+        return -join @(
+            $sha256.ComputeHash($bytes) |
+                ForEach-Object { $_.ToString('x2') })
+    }
+    finally {
+        $sha256.Dispose()
+    }
 }
 
 function Assert-OrdinaryFileSystemItem {
@@ -289,6 +330,21 @@ Assert-OrdinaryFileSystemItem -Item $workflowRoot
 if (-not $workflowRoot.PSIsContainer) {
     throw "Workflow directory '$WorkflowDirectory' is not a directory."
 }
+$repositoryWorkflowDirectory = [IO.Path]::GetFullPath(
+    (Join-Path (Split-Path -Parent $PSScriptRoot) '.github\workflows')
+).TrimEnd(
+    [IO.Path]::DirectorySeparatorChar,
+    [IO.Path]::AltDirectorySeparatorChar)
+$resolvedWorkflowDirectory = [IO.Path]::GetFullPath(
+    $workflowRoot.FullName
+).TrimEnd(
+    [IO.Path]::DirectorySeparatorChar,
+    [IO.Path]::AltDirectorySeparatorChar)
+$enforceProductionContracts =
+    $RequireProductionContracts.IsPresent -or
+    $resolvedWorkflowDirectory.Equals(
+        $repositoryWorkflowDirectory,
+        [StringComparison]::OrdinalIgnoreCase)
 
 $workflowFiles = @(
     Get-ChildItem -LiteralPath $workflowRoot.FullName -Force -File |
@@ -649,6 +705,79 @@ foreach ($workflowFile in $workflowFiles) {
         if (-not $foundCredentialPolicy -or $credentialPolicyCount -ne 1) {
             throw "Checkout in '$($workflowFile.Name)' must explicitly disable persisted credentials."
         }
+    }
+}
+
+if ($enforceProductionContracts) {
+    $expectedProductionWorkflowNames =
+        [Collections.Generic.HashSet[string]]::new(
+            [StringComparer]::Ordinal)
+    foreach ($workflowName in $productionWorkflowDigests.Keys) {
+        [void]$expectedProductionWorkflowNames.Add($workflowName)
+    }
+    if ($workflowFiles.Count -ne $expectedProductionWorkflowNames.Count) {
+        throw (
+            'The production workflow set must contain exactly ' +
+            "$($expectedProductionWorkflowNames.Count) audited files.")
+    }
+    foreach ($workflowFile in $workflowFiles) {
+        if (-not $expectedProductionWorkflowNames.Contains(
+                $workflowFile.Name)) {
+            throw (
+                "Unexpected production workflow '$($workflowFile.Name)'; " +
+                'every production workflow requires an audited contract.')
+        }
+    }
+
+    foreach ($workflowName in @(
+            $productionWorkflowDigests.Keys | Sort-Object)) {
+        $workflowPath = Join-Path $workflowRoot.FullName $workflowName
+        if (-not (Test-Path -LiteralPath $workflowPath -PathType Leaf)) {
+            throw "Required production workflow '$workflowName' is missing."
+        }
+        $workflowText = Get-Content `
+            -LiteralPath $workflowPath `
+            -Raw `
+            -Encoding UTF8
+        $actualDigest = Get-ProductionWorkflowDigest `
+            -WorkflowText $workflowText
+        $expectedDigest = $productionWorkflowDigests[$workflowName]
+        if ($actualDigest -cne $expectedDigest) {
+            throw (
+                "Production workflow '$workflowName' does not match its " +
+                "audited control contract (expected $expectedDigest, got " +
+                "$actualDigest). Update the digest only after an explicit " +
+                'trust-boundary review.')
+        }
+    }
+
+    $productionText = [string]::Join(
+        "`n",
+        @($workflowFiles | ForEach-Object {
+                Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8
+            }))
+    $callerPins = @(
+        [regex]::Matches(
+            $productionText,
+            'wiresock/WireSockUI/\.github/workflows/' +
+                '(?:sdk-integration|release-signing)\.yml@' +
+                '(?<sha>[0-9a-f]{40})') |
+            ForEach-Object { $_.Groups['sha'].Value })
+    $sdkInputPins = @(
+        [regex]::Matches(
+            $productionText,
+            '(?m)^\s+sdk_workflow_sha:\s*(?<sha>[0-9a-f]{40})\s*$') |
+            ForEach-Object { $_.Groups['sha'].Value })
+    if ($callerPins.Count -ne 4 -or $sdkInputPins.Count -ne 3) {
+        throw (
+            'Production workflows must contain exactly four privileged ' +
+            'reusable-workflow callers and three SDK workflow SHA inputs.')
+    }
+    $allProductionPins = @($callerPins) + @($sdkInputPins)
+    if (@($allProductionPins | Sort-Object -Unique).Count -ne 1) {
+        throw (
+            'All privileged reusable-workflow callers and SDK workflow SHA ' +
+            'inputs must use the same immutable implementation revision.')
     }
 }
 
