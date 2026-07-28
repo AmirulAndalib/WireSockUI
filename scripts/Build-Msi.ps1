@@ -88,6 +88,137 @@ function Get-DeterministicGuid {
     return (New-Object Guid (,$guidBytes)).ToString('B').ToUpperInvariant()
 }
 
+function Get-DeterministicMsiIdentifier {
+    param(
+        [string]$Prefix,
+        [string]$Identity
+    )
+
+    $guid = Get-DeterministicGuid -Identity "MsiIdentifier|$Identity"
+    return $Prefix + $guid.Substring(1, 36).Replace('-', '')
+}
+
+function ConvertTo-WixAttributeValue {
+    param([string]$Value)
+
+    return [Security.SecurityElement]::Escape($Value)
+}
+
+function Get-PayloadAuthoring {
+    param(
+        [object[]]$RuntimeFiles,
+        [string]$Architecture
+    )
+
+    $sortedRuntimeFiles = @(
+        $RuntimeFiles |
+            Sort-Object `
+                -Property @{ Expression = { $_.ManifestPath.ToUpperInvariant() } },
+                          @{ Expression = { $_.ManifestPath } }
+    )
+    $payloadFiles = @(
+        $sortedRuntimeFiles |
+            Where-Object {
+                $_.ManifestPath -cnotin @(
+                    'WireSockUI.exe',
+                    'WireSockUI.exe.config')
+            }
+    )
+    if ($payloadFiles.Count -lt 1) {
+        throw 'The MSI payload authoring has no files outside the native-host component.'
+    }
+
+    $directoryPaths =
+        New-Object 'System.Collections.Generic.HashSet[string]' (
+            [StringComparer]::OrdinalIgnoreCase)
+    foreach ($runtimeFile in $sortedRuntimeFiles) {
+        $segments = $runtimeFile.ManifestPath.Split('/')
+        for ($segmentCount = 1;
+            $segmentCount -lt $segments.Count;
+            $segmentCount++) {
+            $directoryPath = [string]::Join(
+                '/',
+                $segments[0..($segmentCount - 1)])
+            [void]$directoryPaths.Add($directoryPath)
+        }
+    }
+    $sortedDirectoryPaths = @(
+        $directoryPaths |
+            Sort-Object `
+                -Property @{ Expression = { ($_.Split('/')).Count } },
+                          @{ Expression = { $_.ToUpperInvariant() } },
+                          @{ Expression = { $_ } }
+    )
+
+    $directorySddl =
+        'O:BAG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;GRGX;;;BU)'
+    $fileSddl =
+        'O:BAG:SYD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;GRGX;;;BU)'
+    $lines = New-Object 'System.Collections.Generic.List[string]'
+    $lines.Add('<?xml version="1.0" encoding="utf-8"?>')
+    $lines.Add('<Include xmlns="http://wixtoolset.org/schemas/v4/wxs">')
+
+    foreach ($directoryPath in $sortedDirectoryPaths) {
+        $componentId = Get-DeterministicMsiIdentifier `
+            -Prefix 'PayloadDirectorySecurity_' `
+            -Identity "PayloadDirectorySecurity|$directoryPath"
+        $permissionId = Get-DeterministicMsiIdentifier `
+            -Prefix 'PayloadDirectoryPermission_' `
+            -Identity "PayloadDirectoryPermission|$directoryPath"
+        $componentGuid = Get-DeterministicGuid `
+            -Identity "Component|PayloadDirectorySecurity|$Architecture|$directoryPath"
+        $subdirectory = ConvertTo-WixAttributeValue `
+            -Value $directoryPath.Replace('/', '\')
+        $lines.Add('  <Component')
+        $lines.Add("      Id=`"$componentId`"")
+        $lines.Add("      Guid=`"$componentGuid`"")
+        $lines.Add('      Directory="WireSockInstallFolder"')
+        $lines.Add("      Subdirectory=`"$subdirectory`">")
+        $lines.Add('    <CreateFolder>')
+        $lines.Add('      <PermissionEx')
+        $lines.Add("          Id=`"$permissionId`"")
+        $lines.Add("          Sddl=`"$directorySddl`" />")
+        $lines.Add('    </CreateFolder>')
+        $lines.Add('  </Component>')
+    }
+
+    foreach ($runtimeFile in $payloadFiles) {
+        $componentId = Get-DeterministicMsiIdentifier `
+            -Prefix 'PayloadFile_' `
+            -Identity "PayloadFile|$($runtimeFile.ManifestPath)"
+        $permissionId = Get-DeterministicMsiIdentifier `
+            -Prefix 'PayloadFilePermission_' `
+            -Identity "PayloadFilePermission|$($runtimeFile.ManifestPath)"
+        $relativeWindowsPath = $runtimeFile.ManifestPath.Replace('/', '\')
+        $relativeSource = ConvertTo-WixAttributeValue `
+            -Value "!(bindpath.Payload)\$relativeWindowsPath"
+        $directoryPath = [IO.Path]::GetDirectoryName($relativeWindowsPath)
+        $lines.Add('  <Component')
+        $lines.Add("      Id=`"$componentId`"")
+        $lines.Add('      Guid="*"')
+        if (-not [string]::IsNullOrEmpty($directoryPath)) {
+            $lines.Add('      Directory="WireSockInstallFolder"')
+            $subdirectory = ConvertTo-WixAttributeValue -Value $directoryPath
+            $lines.Add("      Subdirectory=`"$subdirectory`">")
+        }
+        else {
+            $lines.Add('      Directory="WireSockInstallFolder">')
+        }
+        $lines.Add('    <File')
+        $lines.Add("        Id=`"$componentId`"")
+        $lines.Add("        Source=`"$relativeSource`"")
+        $lines.Add('        KeyPath="yes">')
+        $lines.Add('      <PermissionEx')
+        $lines.Add("          Id=`"$permissionId`"")
+        $lines.Add("          Sddl=`"$fileSddl`" />")
+        $lines.Add('    </File>')
+        $lines.Add('  </Component>')
+    }
+
+    $lines.Add('</Include>')
+    return [string]::Join("`r`n", $lines) + "`r`n"
+}
+
 function Get-DeterministicProductCode {
     param(
         [string]$Architecture,
@@ -564,6 +695,7 @@ $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) ('WireSockUI.Msi.' + [Guid
 $stagedPayloadPath = Join-Path $temporaryRoot 'payload'
 $intermediatePath = Join-Path $temporaryRoot 'obj'
 $expectedFilesPath = Join-Path $temporaryRoot 'expected-files.txt'
+$payloadAuthoringPath = Join-Path $temporaryRoot 'payload-authoring.wxi'
 $productCode = Get-DeterministicProductCode `
     -Architecture $normalizedArchitecture `
     -ProductVersion $Version `
@@ -599,6 +731,14 @@ try {
         Sort-Object -Unique |
         Set-Content -LiteralPath $expectedFilesPath -Encoding UTF8
 
+    $payloadAuthoring = Get-PayloadAuthoring `
+        -RuntimeFiles $runtimeFiles.ToArray() `
+        -Architecture $normalizedArchitecture
+    [IO.File]::WriteAllText(
+        $payloadAuthoringPath,
+        $payloadAuthoring,
+        [Text.UTF8Encoding]::new($false))
+
     $dotnetArguments = @(
         'build',
         $projectPath,
@@ -616,6 +756,7 @@ try {
         "--property:FileComponentGuidSeed=$fileComponentGuidSeed",
         '--property:RuntimePayloadValidated=true',
         "--property:PayloadDirectory=$stagedPayloadPath",
+        "--property:PayloadAuthoringPath=$payloadAuthoringPath",
         "--property:OutputPath=$($outputPath.TrimEnd('\', '/'))\",
         "--property:IntermediateOutputPath=$($intermediatePath.TrimEnd('\', '/'))\",
         "--property:OutputName=WireSockUI-$Version-win-$normalizedArchitecture-$Flavor",

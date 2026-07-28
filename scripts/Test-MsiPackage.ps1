@@ -266,6 +266,16 @@ function Get-DeterministicGuid {
     return (New-Object Guid (,$guidBytes)).ToString('B').ToUpperInvariant()
 }
 
+function Get-DeterministicMsiIdentifier {
+    param(
+        [string]$Prefix,
+        [string]$Identity
+    )
+
+    $guid = Get-DeterministicGuid -Identity "MsiIdentifier|$Identity"
+    return $Prefix + $guid.Substring(1, 36).Replace('-', '')
+}
+
 function Get-DeterministicProductCode {
     param(
         [string]$Architecture,
@@ -1397,30 +1407,108 @@ try {
         throw "MSI table inventory differs from the closed-world allowlist. Missing: $($missingTableNames -join ', '); unexpected: $($unexpectedTableNames -join ', ')."
     }
 
-    # WiX/MSI 5 schema order: MsiLockPermissionsEx, LockObject, Table,
-    # SDDLText, Condition.
-    $permissionRows = @(Get-MsiRows -Sql 'SELECT * FROM `MsiLockPermissionsEx`')
-    $expectedDirectorySddl = 'O:BAG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;GRGX;;;BU)'
-    if ($permissionRows.Count -ne 1 -or
-        [string]$permissionRows[0][0] -cne 'ApplicationDirectoryPermission' -or
-        [string]$permissionRows[0][1] -cne 'WireSockInstallFolder' -or
-        [string]$permissionRows[0][2] -cne 'CreateFolder' -or
-        [string]$permissionRows[0][3] -cne $expectedDirectorySddl -or
-        -not [string]::IsNullOrEmpty([string]$permissionRows[0][4])) {
-        $permissionDescription = (
-            $permissionRows |
-                ForEach-Object {
-                    "Id='$($_[0])', LockObject='$($_[1])', Table='$($_[2])', SDDL='$($_[3])', Condition='$($_[4])'"
-                }
-        ) -join '; '
-        throw "MSI does not contain exactly one expected protected application-directory ACL: $permissionDescription"
+    $createFolderRows = @(Get-MsiRows -Sql 'SELECT * FROM `CreateFolder`')
+    if ($createFolderRows.Count -lt 1 -or
+        $createFolderRows.Count -gt $maximumPayloadEntries) {
+        throw "MSI CreateFolder table contains an invalid number of rows: $($createFolderRows.Count)."
+    }
+    $createFolderComponentByDirectory = @{}
+    foreach ($createFolderRow in $createFolderRows) {
+        $directoryId = [string]$createFolderRow[0]
+        $componentId = [string]$createFolderRow[1]
+        if ($directoryId -cnotmatch '^[A-Za-z_][A-Za-z0-9_.]{0,71}$' -or
+            $componentId -cnotmatch '^[A-Za-z_][A-Za-z0-9_.]{0,71}$' -or
+            $createFolderComponentByDirectory.ContainsKey($directoryId)) {
+            throw 'MSI CreateFolder table contains a duplicate or noncanonical row.'
+        }
+        $createFolderComponentByDirectory[$directoryId] = $componentId
+    }
+    if (-not $createFolderComponentByDirectory.ContainsKey(
+            'WireSockInstallFolder') -or
+        [string]$createFolderComponentByDirectory[
+            'WireSockInstallFolder'] -cne
+            'ApplicationDirectorySecurity') {
+        throw 'The protected application directory is not owned by its dedicated component.'
     }
 
-    $createFolderRows = @(Get-MsiRows -Sql 'SELECT * FROM `CreateFolder`')
-    if ($createFolderRows.Count -ne 1 -or
-        [string]$createFolderRows[0][0] -cne 'WireSockInstallFolder' -or
-        [string]$createFolderRows[0][1] -cne 'ApplicationDirectorySecurity') {
-        throw 'The protected application directory is not owned by its dedicated component.'
+    $fileIdentityRows = @(Get-MsiRows -Sql 'SELECT `File` FROM `File`')
+    $fileIdsForPermissions =
+        New-Object 'System.Collections.Generic.HashSet[string]' (
+            [StringComparer]::Ordinal)
+    foreach ($fileIdentityRow in $fileIdentityRows) {
+        $fileId = [string]$fileIdentityRow[0]
+        if ($fileId -cnotmatch '^[A-Za-z_][A-Za-z0-9_.]{0,71}$' -or
+            -not $fileIdsForPermissions.Add($fileId)) {
+            throw "MSI File table contains duplicate or noncanonical identifier '$fileId'."
+        }
+    }
+
+    # WiX/MSI 5 schema order: MsiLockPermissionsEx, LockObject, Table,
+    # SDDLText, Condition. Every installed file and explicitly created
+    # directory must have one exact protected descriptor so repair normalizes
+    # pre-existing ACLs instead of relying only on one-time inheritance.
+    $permissionRows = @(Get-MsiRows -Sql 'SELECT * FROM `MsiLockPermissionsEx`')
+    $expectedDirectorySddl = 'O:BAG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;GRGX;;;BU)'
+    $expectedFileSddl = 'O:BAG:SYD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;GRGX;;;BU)'
+    if ($permissionRows.Count -ne
+        $fileIdsForPermissions.Count +
+            $createFolderComponentByDirectory.Count) {
+        throw 'MSI permissions do not cover every File and CreateFolder row exactly once.'
+    }
+    $permissionIds =
+        New-Object 'System.Collections.Generic.HashSet[string]' (
+            [StringComparer]::Ordinal)
+    $securedFileIds =
+        New-Object 'System.Collections.Generic.HashSet[string]' (
+            [StringComparer]::Ordinal)
+    $securedDirectoryIds =
+        New-Object 'System.Collections.Generic.HashSet[string]' (
+            [StringComparer]::Ordinal)
+    $filePermissionIdByFileId = @{}
+    $directoryPermissionIdByDirectoryId = @{}
+    foreach ($permissionRow in $permissionRows) {
+        $permissionId = [string]$permissionRow[0]
+        $lockObject = [string]$permissionRow[1]
+        $tableName = [string]$permissionRow[2]
+        $sddl = [string]$permissionRow[3]
+        $condition = [string]$permissionRow[4]
+        if ($permissionId -cnotmatch
+                '^[A-Za-z_][A-Za-z0-9_.]{0,71}$' -or
+            -not $permissionIds.Add($permissionId) -or
+            -not [string]::IsNullOrEmpty($condition)) {
+            throw "MSI permission '$permissionId' has invalid identity, condition, or duplication."
+        }
+
+        if ($tableName -ceq 'File') {
+            if (-not $fileIdsForPermissions.Contains($lockObject) -or
+                -not $securedFileIds.Add($lockObject) -or
+                $sddl -cne $expectedFileSddl) {
+                throw "MSI file permission '$permissionId' has an unknown target, duplicate target, or unexpected SDDL."
+            }
+            $filePermissionIdByFileId[$lockObject] = $permissionId
+        }
+        elseif ($tableName -ceq 'CreateFolder') {
+            if (-not $createFolderComponentByDirectory.ContainsKey(
+                    $lockObject) -or
+                -not $securedDirectoryIds.Add($lockObject) -or
+                $sddl -cne $expectedDirectorySddl) {
+                throw "MSI directory permission '$permissionId' has an unknown target, duplicate target, or unexpected SDDL."
+            }
+            $directoryPermissionIdByDirectoryId[$lockObject] =
+                $permissionId
+            if ($lockObject -ceq 'WireSockInstallFolder' -and
+                $permissionId -cne 'ApplicationDirectoryPermission') {
+                throw 'The application-directory permission identity changed unexpectedly.'
+            }
+        }
+        else {
+            throw "MSI permission '$permissionId' targets unexpected table '$tableName'."
+        }
+    }
+    if ($securedFileIds.Count -ne $fileIdsForPermissions.Count -or
+        $securedDirectoryIds.Count -ne
+            $createFolderComponentByDirectory.Count) {
+        throw 'MSI permission coverage is incomplete.'
     }
 
     # Schema order begins Shortcut, Directory_, Name, Component_, Target,
@@ -1676,6 +1764,84 @@ try {
         [void]$payloadComponentIds.Add($fileComponent)
         $actualFiles += $relativePath
     }
+
+    foreach ($fileId in $fileIdToRelativePath.Keys) {
+        $manifestPath = [string]$fileIdToRelativePath[$fileId]
+        $expectedFilePermissionId = if (
+            $manifestPath -ceq 'WireSockUI.exe') {
+            'WireSockRuntimeHostPermission'
+        }
+        elseif ($manifestPath -ceq 'WireSockUI.exe.config') {
+            'WireSockRuntimeConfigPermission'
+        }
+        else {
+            Get-DeterministicMsiIdentifier `
+                -Prefix 'PayloadFilePermission_' `
+                -Identity "PayloadFilePermission|$manifestPath"
+        }
+        if ([string]$filePermissionIdByFileId[$fileId] -cne
+            $expectedFilePermissionId) {
+            throw "File '$manifestPath' does not use its deterministic permission identity."
+        }
+    }
+
+    $payloadDirectoryIds =
+        New-Object 'System.Collections.Generic.HashSet[string]' (
+            [StringComparer]::Ordinal)
+    [void]$payloadDirectoryIds.Add('WireSockInstallFolder')
+    foreach ($fileComponent in $fileIdToComponent.Values) {
+        $currentDirectoryId = [string]$componentDirectory[$fileComponent]
+        $visitedDirectoryIds =
+            New-Object 'System.Collections.Generic.HashSet[string]' (
+                [StringComparer]::Ordinal)
+        while (-not [string]::Equals(
+                $currentDirectoryId,
+                'WireSockInstallFolder',
+                [StringComparison]::Ordinal)) {
+            if (-not $visitedDirectoryIds.Add($currentDirectoryId) -or
+                -not $directories.ContainsKey($currentDirectoryId)) {
+                throw "Payload file component '$fileComponent' has an invalid directory ancestry."
+            }
+            [void]$payloadDirectoryIds.Add($currentDirectoryId)
+            $currentDirectoryId =
+                [string]$directories[$currentDirectoryId].Parent
+        }
+    }
+    if ($payloadDirectoryIds.Count -ne
+            $createFolderComponentByDirectory.Count) {
+        throw 'MSI CreateFolder rows do not match the exact payload directory tree.'
+    }
+    $seenPayloadDirectoryPaths =
+        New-Object 'System.Collections.Generic.HashSet[string]' (
+            [StringComparer]::OrdinalIgnoreCase)
+    foreach ($payloadDirectoryId in $payloadDirectoryIds) {
+        if (-not $createFolderComponentByDirectory.ContainsKey(
+                $payloadDirectoryId)) {
+            throw "Payload directory '$payloadDirectoryId' has no protected CreateFolder row."
+        }
+        $expectedDirectoryPermissionId = if (
+            $payloadDirectoryId -ceq 'WireSockInstallFolder') {
+            'ApplicationDirectoryPermission'
+        }
+        else {
+            $relativeDirectory = (
+                Get-RelativeDirectory -DirectoryId $payloadDirectoryId
+            ).Replace('\', '/')
+            if (-not $seenPayloadDirectoryPaths.Add(
+                    $relativeDirectory)) {
+                throw "More than one Directory-table row resolves to '$relativeDirectory'."
+            }
+            Get-DeterministicMsiIdentifier `
+                -Prefix 'PayloadDirectoryPermission_' `
+                -Identity "PayloadDirectoryPermission|$relativeDirectory"
+        }
+        if ([string]$directoryPermissionIdByDirectoryId[
+                $payloadDirectoryId] -cne
+            $expectedDirectoryPermissionId) {
+            throw "Payload directory '$payloadDirectoryId' does not use its deterministic permission identity."
+        }
+    }
+
     if (-not $sawRuntimeHostFile -or -not $sawRuntimeConfigFile) {
         throw 'MSI does not contain the required native-host/configuration companion pair.'
     }
@@ -1696,14 +1862,40 @@ try {
         }
     }
 
-    $expectedComponentAttributes = if ($ExpectedArchitecture -eq 'x86') { 0 } else { 256 }
-    if ($completeComponentRows.Count -ne $payloadComponentIds.Count + 2) {
-        throw 'MSI Component table does not contain one component per versioned parent plus its two installer-owned components.'
+    $directorySecurityDirectoryByComponent = @{}
+    foreach ($directoryId in $createFolderComponentByDirectory.Keys) {
+        if ($directoryId -ceq 'WireSockInstallFolder') {
+            continue
+        }
+        $directoryComponentId =
+            [string]$createFolderComponentByDirectory[$directoryId]
+        if ($directorySecurityDirectoryByComponent.ContainsKey(
+                $directoryComponentId) -or
+            $payloadComponentIds.Contains($directoryComponentId) -or
+            $directoryComponentId -in @(
+                'ApplicationDirectorySecurity',
+                'StartMenuShortcutComponent')) {
+            throw 'A payload-directory security component is duplicated or owns unrelated resources.'
+        }
+        $directorySecurityDirectoryByComponent[
+            $directoryComponentId] = $directoryId
+    }
+
+    $expectedComponentAttributes =
+        if ($ExpectedArchitecture -eq 'x86') { 0 } else { 256 }
+    if ($completeComponentRows.Count -ne
+        $payloadComponentIds.Count +
+            $directorySecurityDirectoryByComponent.Count +
+            2) {
+        throw 'MSI Component table does not contain the exact payload-file, payload-directory, and installer-owned component inventory.'
     }
     $seenComponentGuids = New-Object 'System.Collections.Generic.HashSet[string]' (
         [StringComparer]::OrdinalIgnoreCase)
     $componentIds = New-Object 'System.Collections.Generic.HashSet[string]' (
         [StringComparer]::Ordinal)
+    $seenDirectorySecurityComponentIds =
+        New-Object 'System.Collections.Generic.HashSet[string]' (
+            [StringComparer]::Ordinal)
     foreach ($componentRow in $completeComponentRows) {
         $componentId = [string]$componentRow[0]
         $componentGuid = [string]$componentRow[1]
@@ -1738,6 +1930,35 @@ try {
             continue
         }
 
+        if ($directorySecurityDirectoryByComponent.ContainsKey(
+                $componentId)) {
+            $directoryId =
+                [string]$directorySecurityDirectoryByComponent[$componentId]
+            $relativeDirectory = (
+                Get-RelativeDirectory -DirectoryId $directoryId
+            ).Replace('\', '/')
+            $expectedDirectoryComponentId =
+                Get-DeterministicMsiIdentifier `
+                    -Prefix 'PayloadDirectorySecurity_' `
+                    -Identity "PayloadDirectorySecurity|$relativeDirectory"
+            $expectedDirectoryComponentGuid =
+                Get-DeterministicGuid `
+                    -Identity (
+                        'Component|PayloadDirectorySecurity|' +
+                        "$ExpectedArchitecture|$relativeDirectory")
+            if ([string]::IsNullOrEmpty($relativeDirectory) -or
+                $componentId -cne $expectedDirectoryComponentId -or
+                $componentGuid -cne $expectedDirectoryComponentGuid -or
+                $componentDirectoryId -cne $directoryId -or
+                $componentAttributes -ne $expectedComponentAttributes -or
+                -not [string]::IsNullOrEmpty($componentKeyPath) -or
+                $fileIdToRelativePath.ContainsKey($componentId) -or
+                -not $seenDirectorySecurityComponentIds.Add($componentId)) {
+                throw "Payload-directory security component '$componentId' differs from its exact invariant."
+            }
+            continue
+        }
+
         if (-not $payloadComponentIds.Contains($componentId) -or
             -not $fileIdToRelativePath.ContainsKey($componentId) -or
             [string]$fileIdToVersion[$componentId] -cnotmatch
@@ -1750,6 +1971,21 @@ try {
             $componentGuid -cne $expectedRuntimeHostComponentGuid) {
             throw 'The runtime-host component does not use its architecture-specific deterministic GUID.'
         }
+        if ($componentId -cne $runtimeHostFileId) {
+            $manifestPath =
+                [string]$fileIdToRelativePath[$componentId]
+            $expectedPayloadComponentId =
+                Get-DeterministicMsiIdentifier `
+                    -Prefix 'PayloadFile_' `
+                    -Identity "PayloadFile|$manifestPath"
+            if ($componentId -cne $expectedPayloadComponentId) {
+                throw "Payload component '$componentId' does not use its installed-path identity."
+            }
+        }
+    }
+    if ($seenDirectorySecurityComponentIds.Count -ne
+        $directorySecurityDirectoryByComponent.Count) {
+        throw 'MSI omits one or more payload-directory security components.'
     }
 
     $reachableDirectoryIds = New-Object 'System.Collections.Generic.HashSet[string]' (

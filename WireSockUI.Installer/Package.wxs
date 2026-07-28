@@ -79,8 +79,8 @@
       The mixed-case identifier is deliberately private. Callers cannot redirect
       this elevated package to a user-writable directory with an MSI property.
       Windows Installer creates the directory through its per-machine service.
-      MSI 5's standard MsiLockPermissionsEx action establishes the expected ACL
-      without introducing executable custom-action code.
+      MSI 5 processes the MsiLockPermissionsEx table from the CreateFolders and
+      InstallFiles standard actions, without executable custom-action code.
     -->
     <StandardDirectory Id="ProgramFiles6432Folder">
       <!--
@@ -114,11 +114,19 @@
           <File
               Id="WireSockRuntimeHostFile"
               Source="!(bindpath.Payload)\WireSockUI.exe"
-              KeyPath="yes" />
+              KeyPath="yes">
+            <PermissionEx
+                Id="WireSockRuntimeHostPermission"
+                Sddl="O:BAG:SYD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;GRGX;;;BU)" />
+          </File>
           <File
               Id="WireSockRuntimeConfigFile"
               Source="!(bindpath.Payload)\WireSockUI.exe.config"
-              CompanionFile="WireSockRuntimeHostFile" />
+              CompanionFile="WireSockRuntimeHostFile">
+            <PermissionEx
+                Id="WireSockRuntimeConfigPermission"
+                Sddl="O:BAG:SYD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;GRGX;;;BU)" />
+          </File>
         </Component>
       </Directory>
     </StandardDirectory>
@@ -148,33 +156,11 @@
     </StandardDirectory>
 
     <!--
-      WiX v5+ built-in file harvesting generates stable component identities from
-      the installed paths. The build wrapper stages only runtime files, and the
-      project rejects unfiltered payload directories before this authoring runs.
-      The extension filters below are a second line of defense.
+      Build-Msi.ps1 generates one explicit component per manifest-bound file.
+      Guid="*" plus the directory seed preserves WiX's installed-path component
+      identities, while per-file and per-directory PermissionEx rows make
+      force-all repair normalize ACLs that were changed after installation.
     -->
-    <Files Include="!(bindpath.Payload)\**" Directory="WireSockInstallFolder">
-      <Exclude Files="!(bindpath.Payload)\WireSockUI.exe" />
-      <Exclude Files="!(bindpath.Payload)\WireSockUI.exe.config" />
-      <Exclude Files="!(bindpath.Payload)\**.pdb" />
-      <Exclude Files="!(bindpath.Payload)\**.wixpdb" />
-      <Exclude Files="!(bindpath.Payload)\**.msi" />
-      <Exclude Files="!(bindpath.Payload)\**.msix" />
-      <Exclude Files="!(bindpath.Payload)\**.msp" />
-      <Exclude Files="!(bindpath.Payload)\**.cab" />
-      <Exclude Files="!(bindpath.Payload)\**.zip" />
-      <Exclude Files="!(bindpath.Payload)\**.nupkg" />
-      <Exclude Files="!(bindpath.Payload)\**.snupkg" />
-      <Exclude Files="!(bindpath.Payload)\**.sha256" />
-      <Exclude Files="!(bindpath.Payload)\**.obj" />
-      <Exclude Files="!(bindpath.Payload)\**.res" />
-      <Exclude Files="!(bindpath.Payload)\**.exp" />
-      <Exclude Files="!(bindpath.Payload)\**.lib" />
-      <Exclude Files="!(bindpath.Payload)\**.ilk" />
-      <Exclude Files="!(bindpath.Payload)\**.map" />
-      <Exclude Files="!(bindpath.Payload)\**.spdx.json" />
-      <Exclude Files="!(bindpath.Payload)\**.sbom.json" />
-      <Exclude Files="!(bindpath.Payload)\**.intoto.jsonl" />
-    </Files>
+    <?include $(var.PayloadAuthoringPath) ?>
   </Package>
 </Wix>

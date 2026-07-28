@@ -196,12 +196,24 @@ function Test-IsCanonicalIdentityResource {
             'component:StartMenuShortcutComponent')) {
         return $true
     }
-    if (-not $Resource.StartsWith('file:', [StringComparison]::Ordinal) -or
-        $Resource.Length -gt 32768) {
+    $prefix = if ($Resource.StartsWith(
+            'file:',
+            [StringComparison]::Ordinal)) {
+        'file:'
+    }
+    elseif ($Resource.StartsWith(
+            'directory:',
+            [StringComparison]::Ordinal)) {
+        'directory:'
+    }
+    else {
+        return $false
+    }
+    if ($Resource.Length -gt 32768) {
         return $false
     }
 
-    $path = $Resource.Substring('file:'.Length)
+    $path = $Resource.Substring($prefix.Length)
     if ([string]::IsNullOrWhiteSpace($path) -or
         $path.Contains('\') -or
         $path.StartsWith('/', [StringComparison]::Ordinal) -or
@@ -445,6 +457,33 @@ try {
                 }
             }
 
+            $createFolderComponentByDirectory = @{}
+            $createFolderDirectoryByComponent = @{}
+            foreach ($row in @(
+                    Get-Rows $database 'SELECT * FROM `CreateFolder`')) {
+                $directoryId = [string]$row[0]
+                $componentId = [string]$row[1]
+                if (-not $directories.ContainsKey($directoryId) -or
+                    -not $components.ContainsKey($componentId) -or
+                    $createFolderComponentByDirectory.ContainsKey(
+                        $directoryId) -or
+                    $createFolderDirectoryByComponent.ContainsKey(
+                        $componentId)) {
+                    throw "MSI '$resolvedPath' has duplicate, unknown, or shared CreateFolder ownership."
+                }
+                $createFolderComponentByDirectory[$directoryId] =
+                    $componentId
+                $createFolderDirectoryByComponent[$componentId] =
+                    $directoryId
+            }
+            if (-not $createFolderComponentByDirectory.ContainsKey(
+                    'WireSockInstallFolder') -or
+                [string]$createFolderComponentByDirectory[
+                    'WireSockInstallFolder'] -cne
+                    'ApplicationDirectorySecurity') {
+                throw "MSI '$resolvedPath' lacks exact application-directory CreateFolder ownership."
+            }
+
             $fileComponentGuidsByPath =
                 [Collections.Generic.Dictionary[string,string]]::new(
                     [StringComparer]::OrdinalIgnoreCase)
@@ -531,7 +570,30 @@ try {
                     continue
                 }
                 if (-not $filePathsByComponent.ContainsKey($componentId)) {
-                    throw "MSI '$resolvedPath' has payload component '$componentId' without a file resource."
+                    if (-not $createFolderDirectoryByComponent.ContainsKey(
+                            $componentId)) {
+                        throw "MSI '$resolvedPath' has payload component '$componentId' without a file or directory resource."
+                    }
+                    $directoryId =
+                        [string]$createFolderDirectoryByComponent[$componentId]
+                    $relativeDirectory = Get-RelativeDirectory `
+                        -DirectoryId $directoryId `
+                        -Directories $directories `
+                        -PackagePath $resolvedPath
+                    if ([string]::IsNullOrEmpty($relativeDirectory) -or
+                        [string]$components[$componentId].Directory -cne
+                            $directoryId -or
+                        -not [string]::IsNullOrEmpty(
+                            [string]$components[$componentId].KeyPath)) {
+                        throw "MSI '$resolvedPath' has noncanonical payload-directory component '$componentId'."
+                    }
+                    $directoryResource = "directory:$relativeDirectory"
+                    $resourceGuidsByName.Add(
+                        $directoryResource,
+                        $componentGuid)
+                    $resourceByComponentGuid[$componentGuid] =
+                        $directoryResource
+                    continue
                 }
                 $componentPaths = @(
                     $filePathsByComponent[$componentId] |

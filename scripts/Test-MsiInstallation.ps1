@@ -648,6 +648,56 @@ function Assert-ProtectedEntry {
     }
 }
 
+function Set-UntrustedWritableAcl {
+    param(
+        [string]$Path,
+        [switch]$Directory
+    )
+
+    $acl = Get-Acl -LiteralPath $Path
+    $acl.SetOwner($currentUserSid)
+    $inheritanceFlags = if ($Directory) {
+        [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+            [Security.AccessControl.InheritanceFlags]::ObjectInherit
+    }
+    else {
+        [Security.AccessControl.InheritanceFlags]::None
+    }
+    $untrustedWriterSid =
+        [Security.Principal.SecurityIdentifier]::new(
+            'S-1-5-32-545')
+    $unsafeRule = [Security.AccessControl.FileSystemAccessRule]::new(
+        $untrustedWriterSid,
+        [Security.AccessControl.FileSystemRights]::FullControl,
+        $inheritanceFlags,
+        [Security.AccessControl.PropagationFlags]::None,
+        [Security.AccessControl.AccessControlType]::Allow)
+    $acl.AddAccessRule($unsafeRule)
+    Set-Acl -LiteralPath $Path -AclObject $acl
+
+    $corruptedAcl = Get-Acl -LiteralPath $Path
+    $corruptedOwnerSid = $corruptedAcl.GetOwner(
+        [Security.Principal.SecurityIdentifier]).Value
+    $hasUnsafeWriter = @(
+        $corruptedAcl.GetAccessRules(
+            $true,
+            $true,
+            [Security.Principal.SecurityIdentifier]) |
+            Where-Object {
+                $_.IdentityReference.Value -ceq
+                    $untrustedWriterSid.Value -and
+                $_.AccessControlType -eq
+                    [Security.AccessControl.AccessControlType]::Allow -and
+                (Test-MsiWriteCapableFileSystemRights `
+                    -Rights $_.FileSystemRights)
+            }
+    ).Count -gt 0
+    if ($corruptedOwnerSid -cne $currentUserSid.Value -or
+        -not $hasUnsafeWriter) {
+        throw "Failed to establish the unsafe ACL repair fixture at '$Path'."
+    }
+}
+
 $productCode = [string]$metadata.ProductCode
 if ((Get-ProductState -ProductCode $productCode) -ne -1) {
     throw "Product $productCode is already registered on the ephemeral machine."
@@ -826,22 +876,22 @@ try {
     }
     Assert-ProtectedEntry -Path $installRoot -RequireExactApplicationDirectoryAcl
 
-    # Exercise force-all repair too. Remove a payload file and add a
-    # user-writable ACE/owner to the application directory, then require MSI to
-    # restore both the exact bytes and the exact protected directory ACL.
+    # Exercise force-all repair too. Remove one payload file and independently
+    # corrupt the root, a root file, a nested directory, and a nested file.
+    # Protected child DACLs do not inherit later root changes, so each object
+    # class is changed explicitly before MSI is required to normalize it.
     $repairFilePath = Join-Path $installRoot 'WireSockUI.Managed.dll'
     Remove-Item -LiteralPath $repairFilePath -Force
-    $unsafeAcl = Get-Acl -LiteralPath $installRoot
-    $unsafeAcl.SetOwner($currentUserSid)
-    $unsafeRule = [Security.AccessControl.FileSystemAccessRule]::new(
-        $currentUserSid,
-        [Security.AccessControl.FileSystemRights]::FullControl,
-        [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
-            [Security.AccessControl.InheritanceFlags]::ObjectInherit,
-        [Security.AccessControl.PropagationFlags]::None,
-        [Security.AccessControl.AccessControlType]::Allow)
-    $unsafeAcl.AddAccessRule($unsafeRule)
-    Set-Acl -LiteralPath $installRoot -AclObject $unsafeAcl
+    $rootAclRepairFile =
+        Join-Path $installRoot 'Microsoft.Bcl.HashCode.dll'
+    $nestedAclRepairDirectory = Join-Path $installRoot 'de'
+    $nestedAclRepairFile = Join-Path `
+        $nestedAclRepairDirectory `
+        'Microsoft.Win32.TaskScheduler.resources.dll'
+    Set-UntrustedWritableAcl -Path $installRoot -Directory
+    Set-UntrustedWritableAcl -Path $rootAclRepairFile
+    Set-UntrustedWritableAcl -Path $nestedAclRepairDirectory -Directory
+    Set-UntrustedWritableAcl -Path $nestedAclRepairFile
 
     $repairResult = Invoke-MsiExec -Operation 'force-all-repair' -Arguments @(
         '/fa',
