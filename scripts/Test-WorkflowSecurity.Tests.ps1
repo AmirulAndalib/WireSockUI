@@ -49,16 +49,25 @@ $sdkIntegrationWorkflow = Get-Content `
         ) '.github\workflows\sdk-integration.yml') `
     -Raw `
     -Encoding UTF8
-$fullShaPlaceholder = '0' * 40
-$productionMainWorkflow = (
-    Get-Content `
-        -LiteralPath (
-            Join-Path (
-                Split-Path -Parent $PSScriptRoot
-            ) '.github\workflows\main.yml') `
-        -Raw `
-        -Encoding UTF8
-).Replace('@main', "@$fullShaPlaceholder")
+$productionMainWorkflow = Get-Content `
+    -LiteralPath (
+        Join-Path (
+            Split-Path -Parent $PSScriptRoot
+        ) '.github\workflows\main.yml') `
+    -Raw `
+    -Encoding UTF8
+$privilegedCallerPattern =
+    '(?m)(uses:\s+wiresock/WireSockUI/\.github/workflows/' +
+    '(?:sdk-integration|release-signing)\.yml)@[0-9a-f]{40}'
+$mutableProductionMainWorkflow = [Text.RegularExpressions.Regex]::new(
+    $privilegedCallerPattern
+).Replace(
+    $productionMainWorkflow,
+    '$1@main',
+    1)
+if ($mutableProductionMainWorkflow -ceq $productionMainWorkflow) {
+    throw 'The production workflow fixture has no pinned privileged caller to mutate.'
+}
 
 function Invoke-Fixture {
     param(
@@ -128,6 +137,12 @@ try {
         -ReleaseSigningWorkflow $releaseSigningWorkflow `
         -SdkIntegrationWorkflow $sdkIntegrationWorkflow `
         -ShouldPass $true
+    Invoke-Fixture `
+        -Name mutable-production-privileged-caller `
+        -Workflow $mutableProductionMainWorkflow `
+        -ReleaseSigningWorkflow $releaseSigningWorkflow `
+        -SdkIntegrationWorkflow $sdkIntegrationWorkflow `
+        -ShouldPass $false
     Invoke-Fixture `
         -Name candidate-release-validator `
         -Workflow $validWorkflow `
