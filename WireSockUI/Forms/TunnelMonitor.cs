@@ -210,6 +210,16 @@ namespace WireSockUI.Forms
                     if (generation != _currentGeneration())
                         return;
 
+                    if (result.Busy)
+                    {
+                        if (elapsed.ElapsedMilliseconds >= _connectionTimeoutMilliseconds)
+                        {
+                            await _updateHandler(TunnelMonitorUpdate.ConnectionTimedOut(generation));
+                            return;
+                        }
+                        continue;
+                    }
+
                     if (!result.Succeeded)
                     {
                         await _updateHandler(TunnelMonitorUpdate.ConnectionQueryFailed(generation, result));
@@ -257,6 +267,9 @@ namespace WireSockUI.Forms
                     if (generation != _currentGeneration())
                         return;
 
+                    if (connectedResult.Busy)
+                        continue;
+
                     if (!connectedResult.Succeeded)
                     {
                         await _updateHandler(
@@ -275,6 +288,9 @@ namespace WireSockUI.Forms
                     cancellationToken.ThrowIfCancellationRequested();
                     if (generation != _currentGeneration())
                         return;
+
+                    if (stateResult.Busy)
+                        continue;
 
                     if (!stateResult.Succeeded)
                     {

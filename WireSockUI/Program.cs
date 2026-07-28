@@ -20,13 +20,16 @@ using WireSockUI.Properties;
 
 namespace WireSockUI
 {
-    internal static class Program
+    public static class Program
     {
         internal const int MaxApplicationPayloadEntries = 4096;
         internal const int MaxWireSockSdkDirectoryEntries = 1024;
+        internal const string NativeLauncherFileName = "WireSockUI.exe";
+        internal const string NativeHostSelfTestToken = "WireSockUI.NativeHostSelfTest.v1";
         private const uint LoadLibrarySearchDllLoadDir = 0x00000100;
         private const uint LoadLibrarySearchSystem32 = 0x00000800;
         private const uint LoadLibrarySearchUserDirs = 0x00000400;
+        private const uint FixedDriveType = 3;
 
         private static IntPtr _wireSockLibraryHandle = IntPtr.Zero;
         private static IntPtr _wireSockLibraryDirectoryCookie = IntPtr.Zero;
@@ -44,6 +47,16 @@ namespace WireSockUI
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern IntPtr LoadLibraryEx(string fileName, IntPtr file, uint flags);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetVolumePathName(
+            string fileName,
+            StringBuilder volumePathName,
+            uint bufferLength);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+        private static extern uint GetDriveType(string rootPathName);
 
         [DllImport("wtsapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
@@ -63,16 +76,84 @@ namespace WireSockUI
             DomainName = 7
         }
 
-        [STAThread]
-        private static void Main()
+        internal static string ApplicationLauncherPath
         {
+            get
+            {
+                var managedPath = Path.GetFullPath(Assembly.GetExecutingAssembly().Location);
+                var applicationDirectory = Path.GetDirectoryName(managedPath);
+                if (string.IsNullOrWhiteSpace(applicationDirectory))
+                    throw new InvalidOperationException(
+                        "The WireSock UI application directory could not be resolved.");
+
+                return Path.Combine(applicationDirectory, NativeLauncherFileName);
+            }
+        }
+
+        internal static string ApplicationConfigurationPath
+        {
+            get
+            {
+                var applicationDirectory = Path.GetDirectoryName(
+                    Path.GetFullPath(Assembly.GetExecutingAssembly().Location));
+                if (string.IsNullOrWhiteSpace(applicationDirectory))
+                    throw new InvalidOperationException(
+                        "The WireSock UI application directory could not be resolved.");
+
+                return Path.Combine(applicationDirectory, NativeLauncherFileName + ".config");
+            }
+        }
+
+        [STAThread]
+        public static int HostedMain(string hostedArgument)
+        {
+            var nativeHostSelfTestRequested = string.Equals(
+                hostedArgument, NativeHostSelfTestToken, StringComparison.Ordinal);
             if (!TryValidateApplicationPayload(Assembly.GetExecutingAssembly().Location, out var payloadDiagnostic))
             {
-                MessageBox.Show(
+                return ReportStartupFailure(
                     $"WireSock UI cannot run safely from its current location.{Environment.NewLine}{Environment.NewLine}{payloadDiagnostic}{Environment.NewLine}{Environment.NewLine}Install WireSock UI in an administrator-owned directory and retry.",
-                    "WireSock UI startup error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                Environment.Exit(1);
-                return;
+                    "WireSock UI startup error",
+                    MessageBoxIcon.Error,
+                    nativeHostSelfTestRequested,
+                    41);
+            }
+
+            if (!TryValidateTrustedFilePath(
+                    ApplicationLauncherPath,
+                    "WireSock UI native launcher",
+                    out var launcherDiagnostic))
+            {
+                return ReportStartupFailure(
+                    $"WireSock UI must be started through its trusted native launcher.{Environment.NewLine}{Environment.NewLine}{launcherDiagnostic}",
+                    "WireSock UI startup error",
+                    MessageBoxIcon.Error,
+                    nativeHostSelfTestRequested,
+                    42);
+            }
+
+            if (!IsProcessElevated(out var elevationDiagnostic))
+            {
+                return ReportStartupFailure(
+                    $"WireSock UI requires administrator privileges.{Environment.NewLine}{Environment.NewLine}{elevationDiagnostic}{Environment.NewLine}{Environment.NewLine}Start '{NativeLauncherFileName}' instead of the managed application payload.",
+                    "WireSock UI startup error",
+                    MessageBoxIcon.Error,
+                    nativeHostSelfTestRequested,
+                    43);
+            }
+
+            if (nativeHostSelfTestRequested)
+            {
+                try
+                {
+                    return RunNativeHostSelfTest();
+                }
+                catch (Exception ex)
+                {
+                    WriteNativeHostSelfTestDiagnostic(
+                        $"The managed native-host self-test failed with {ex.GetType().Name}: {EscapeDiagnosticText(ex.Message)}");
+                    return 31;
+                }
             }
 
             if (!TryValidateInteractiveUserMatchesProcessUser(out var identityDiagnostic))
@@ -82,8 +163,7 @@ namespace WireSockUI
                     $"{Environment.NewLine}{Environment.NewLine}{identityDiagnostic}" +
                     $"{Environment.NewLine}{Environment.NewLine}Sign in with an administrator account and start WireSock UI again.",
                     "WireSock UI startup error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                Environment.Exit(1);
-                return;
+                return 1;
             }
 
             try
@@ -95,8 +175,14 @@ namespace WireSockUI
                 MessageBox.Show(
                     $"WireSock UI cannot resolve its required Windows data folders.{Environment.NewLine}{Environment.NewLine}{ex.Message}",
                     "WireSock UI startup error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                Environment.Exit(1);
-                return;
+                return 1;
+            }
+
+            if (FrmSettings.TryRunAutoRunHelperCommandLine(
+                    Environment.GetCommandLineArgs(),
+                    out var helperExitCode))
+            {
+                return helperExitCode;
             }
 
             Application.EnableVisualStyles();
@@ -108,8 +194,7 @@ namespace WireSockUI
                 {
                     MessageBox.Show(Resources.AlreadyRunningMessage, Resources.AlreadyRunningTitle,
                         MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    Environment.Exit(1);
-                    return;
+                    return 1;
                 }
             }
             catch (Exception ex)
@@ -117,8 +202,7 @@ namespace WireSockUI
                 MessageBox.Show(
                     $"WireSock UI could not establish exclusive access to the driver interface.{Environment.NewLine}{Environment.NewLine}{ex.Message}",
                     Resources.TunnelErrorTitle, MessageBoxButtons.OK, MessageBoxIcon.Error);
-                Environment.Exit(1);
-                return;
+                return 1;
             }
 
             try
@@ -133,8 +217,7 @@ namespace WireSockUI
                 MessageBox.Show(
                     $"Unable to initialize WireSock UI secure data folders and diagnostics.{Environment.NewLine}{Environment.NewLine}{ex.Message}",
                     Resources.AppNoWireSockTitle, MessageBoxButtons.OK, MessageBoxIcon.Error);
-                Environment.Exit(1);
-                return;
+                return 1;
             }
 
             try
@@ -147,8 +230,7 @@ namespace WireSockUI
                 MessageBox.Show(
                     $"Unable to initialize or migrate WireSock UI settings.{Environment.NewLine}{Environment.NewLine}{ex.Message}",
                     Resources.AppNoWireSockTitle, MessageBoxButtons.OK, MessageBoxIcon.Error);
-                Environment.Exit(1);
-                return;
+                return 1;
             }
 
             RegisterUnhandledExceptionHandlers();
@@ -176,10 +258,117 @@ namespace WireSockUI
                 if (!installationCandidateFound)
                     OpenBrowser(Resources.AppWireSockURL);
 
-                Environment.Exit(1);
+                return 1;
             }
 
             Application.Run(new FrmMain());
+            return 0;
+        }
+
+        private static int ReportStartupFailure(
+            string message,
+            string title,
+            MessageBoxIcon icon,
+            bool nativeHostSelfTestRequested,
+            int nativeHostSelfTestExitCode)
+        {
+            if (nativeHostSelfTestRequested)
+            {
+                WriteNativeHostSelfTestDiagnostic(message);
+                return nativeHostSelfTestExitCode;
+            }
+
+            MessageBox.Show(message, title, MessageBoxButtons.OK, icon);
+            return 1;
+        }
+
+        private static void WriteNativeHostSelfTestDiagnostic(string message)
+        {
+            try
+            {
+                Console.Error.WriteLine(message ?? string.Empty);
+            }
+            catch (IOException)
+            {
+                // Diagnostic output is best effort and must not change the
+                // deterministic self-test exit contract.
+            }
+            catch (ObjectDisposedException)
+            {
+                // The host may not have inherited a writable standard-error
+                // stream. Preserve the exit code even when diagnostics cannot
+                // be emitted.
+            }
+        }
+
+        private static int RunNativeHostSelfTest()
+        {
+            // This exact, read-only health check remains available in production
+            // so disposable MSI tests can exercise the installed CLR host. The
+            // native host dispatches it only after payload and elevation checks.
+            // It intentionally tests only the host contract before interactive
+            // identity and per-user startup, so a headless disposable runner
+            // neither enters nor reads normal application state.
+            if (System.Threading.Thread.CurrentThread.GetApartmentState() !=
+                System.Threading.ApartmentState.STA)
+                return 22;
+            if (Assembly.GetEntryAssembly() != null)
+                return 23;
+            foreach (var dangerousVariable in new[]
+                     {
+                         "COR_ENABLE_PROFILING",
+                         "COR_PROFILER",
+                         "COR_PROFILER_PATH",
+                         "COR_TEST_SENTINEL",
+                         "CORECLR_TEST_SENTINEL",
+                         "COMPLUS_TEST_SENTINEL",
+                         "COMPLUS_Version",
+                         "DOTNET_TEST_SENTINEL",
+                         "DOTNET_STARTUP_HOOKS",
+                         "CORPATH",
+                         "APPDOMAIN_MANAGER_ASM",
+                         "APPDOMAIN_MANAGER_TYPE",
+                         "DEVPATH"
+                     })
+            {
+                if (Environment.GetEnvironmentVariable(dangerousVariable) == null)
+                    continue;
+                return 29;
+            }
+
+            var assemblyDirectory = Path.GetDirectoryName(
+                Path.GetFullPath(Assembly.GetExecutingAssembly().Location));
+            if (string.IsNullOrWhiteSpace(assemblyDirectory) ||
+                !string.Equals(
+                    NormalizePathRoot(AppDomain.CurrentDomain.BaseDirectory),
+                    NormalizePathRoot(assemblyDirectory),
+                    StringComparison.OrdinalIgnoreCase))
+                return 24;
+
+            var hostConfiguration =
+                System.Configuration.ConfigurationManager.OpenExeConfiguration(
+                    System.Configuration.ConfigurationUserLevel.None);
+            if (!string.Equals(
+                    Path.GetFullPath(hostConfiguration.FilePath),
+                    Path.GetFullPath(ApplicationConfigurationPath),
+                    StringComparison.OrdinalIgnoreCase))
+                return 25;
+
+            var resourcesExtensions = Assembly.Load(
+                "System.Resources.Extensions, Version=4.0.0.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51");
+            if (resourcesExtensions.GetName().Version != new Version(10, 0, 0, 10))
+                return 26;
+
+            var launcherVersion = FileVersionInfo.GetVersionInfo(ApplicationLauncherPath);
+            if (!string.Equals(
+                    launcherVersion.CompanyName, "WireSockUI", StringComparison.Ordinal) ||
+                !string.Equals(
+                    launcherVersion.ProductName, "WireSock UI", StringComparison.Ordinal) ||
+                !Version.TryParse(launcherVersion.ProductVersion, out var productVersion) ||
+                productVersion != Assembly.GetExecutingAssembly().GetName().Version)
+                return 27;
+
+            return 0;
         }
 
         private static bool TryValidateInteractiveUserMatchesProcessUser(out string diagnostic)
@@ -203,6 +392,36 @@ namespace WireSockUI
             catch (Exception ex)
             {
                 diagnostic = $"The signed-in Windows account could not be verified: {ex.Message}";
+                return false;
+            }
+        }
+
+        internal static bool IsProcessElevated(out string diagnostic)
+        {
+            diagnostic = null;
+            try
+            {
+                using (var identity = WindowsIdentity.GetCurrent(
+                           TokenAccessLevels.Query | TokenAccessLevels.Duplicate))
+                {
+                    if (identity.User == null)
+                    {
+                        diagnostic = "The current Windows security token has no user identity.";
+                        return false;
+                    }
+
+                    var principal = new WindowsPrincipal(identity);
+                    if (principal.IsInRole(WindowsBuiltInRole.Administrator))
+                        return true;
+                }
+
+                diagnostic =
+                    "The managed application payload is not running with an elevated administrator token.";
+                return false;
+            }
+            catch (Exception ex)
+            {
+                diagnostic = $"The current Windows elevation state could not be verified: {ex.Message}";
                 return false;
             }
         }
@@ -312,7 +531,12 @@ namespace WireSockUI
                     false))
                 return false;
 
-            var configurationPath = normalizedExecutable + ".config";
+            var configurationPath = string.Equals(
+                normalizedExecutable,
+                NormalizePathFileCore(Assembly.GetExecutingAssembly().Location, false),
+                StringComparison.OrdinalIgnoreCase)
+                ? ApplicationConfigurationPath
+                : normalizedExecutable + ".config";
             if (!TryValidateTrustedFilePathCore(configurationPath, "WireSock UI configuration", out diagnostic,
                     false))
                 return false;
@@ -492,9 +716,33 @@ namespace WireSockUI
 
         private static void UpgradeUserSettings()
         {
+            string currentConfigurationPath = null;
+            try
+            {
+                currentConfigurationPath =
+                    System.Configuration.ConfigurationManager.OpenExeConfiguration(
+                            System.Configuration.ConfigurationUserLevel.PerUserRoamingAndLocal)
+                        .FilePath;
+            }
+            catch (Exception ex)
+            {
+                Trace.TraceWarning(
+                    $"Unable to resolve the current per-user settings path: {ex.Message}");
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(currentConfigurationPath) ||
+                !Path.IsPathRooted(currentConfigurationPath))
+            {
+                Trace.TraceWarning(
+                    "Unable to resolve an absolute current per-user settings path; legacy settings migration remains pending.");
+                return;
+            }
+
             RunSettingsUpgrade(
                 Settings.Default.UpgradeRequired,
-                Settings.Default.Upgrade,
+                () => LegacyUserSettingsMigrationService.ApplyLatest(
+                    Settings.Default, currentConfigurationPath),
                 () => Settings.Default.UpgradeRequired = false,
                 Settings.Default.Save);
         }
@@ -532,6 +780,21 @@ namespace WireSockUI
 
         internal static void RunSettingsUpgrade(bool upgradeRequired, Action upgrade, Action markComplete, Action save)
         {
+            if (upgrade == null) throw new ArgumentNullException(nameof(upgrade));
+            RunSettingsUpgrade(
+                upgradeRequired,
+                () =>
+                {
+                    upgrade();
+                    return true;
+                },
+                markComplete,
+                save);
+        }
+
+        internal static void RunSettingsUpgrade(bool upgradeRequired, Func<bool> upgrade,
+            Action markComplete, Action save)
+        {
             if (!upgradeRequired)
                 return;
 
@@ -539,20 +802,28 @@ namespace WireSockUI
             if (markComplete == null) throw new ArgumentNullException(nameof(markComplete));
             if (save == null) throw new ArgumentNullException(nameof(save));
 
-            upgrade();
+            if (!upgrade())
+                return;
             markComplete();
             save();
         }
 
         internal static void OpenBrowser(string url)
         {
+            if (UnelevatedProcessLauncher.OpenHttpsUrl(url, out var diagnostic))
+                return;
+
+            Trace.TraceWarning(
+                $"Failed to open an HTTPS address through the unelevated Windows shell: {diagnostic}");
             try
             {
-                Process.Start(url);
+                MessageBox.Show(
+                    $"WireSock UI could not open the web address without elevation.{Environment.NewLine}{Environment.NewLine}{diagnostic}{Environment.NewLine}{Environment.NewLine}{url}",
+                    "WireSock UI", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
             catch (Exception ex)
             {
-                Trace.TraceWarning($"Failed to open browser for '{url}': {ex.Message}");
+                Trace.TraceWarning($"Unable to display the rejected web address: {ex.Message}");
             }
         }
 
@@ -587,7 +858,7 @@ namespace WireSockUI
         
                 if (!string.IsNullOrWhiteSpace(repository))
                 {
-                    var currentVersion = new Version(Application.ProductVersion);
+                    var currentVersion = Assembly.GetExecutingAssembly().GetName().Version;
                     var latestVersion = GitHubExtensions.GetLatestRelease(repository);
         
                     if (currentVersion != null && latestVersion != null && latestVersion > currentVersion)
@@ -643,9 +914,16 @@ namespace WireSockUI
 
         private static IEnumerable<string> EnumerateWireSockLibraryDirectoryCandidates()
         {
-            yield return AppDomain.CurrentDomain.BaseDirectory;
+            return EnumerateWireSockLibraryDirectoryCandidates(GetInstallLocations());
+        }
 
-            foreach (var installLocation in GetInstallLocations())
+        internal static IEnumerable<string> EnumerateWireSockLibraryDirectoryCandidates(
+            IEnumerable<string> registeredInstallLocations)
+        {
+            if (registeredInstallLocations == null)
+                throw new ArgumentNullException(nameof(registeredInstallLocations));
+
+            foreach (var installLocation in registeredInstallLocations)
             {
                 foreach (var candidate in GetLibraryDirectories(installLocation))
                     yield return candidate;
@@ -1123,6 +1401,165 @@ namespace WireSockUI
             return TryValidateTrustedFilePathCore(file, label, out diagnostic, true);
         }
 
+        internal static bool TryValidateLocalFixedPath(string path, string label, out string diagnostic)
+        {
+            diagnostic = null;
+            label = string.IsNullOrWhiteSpace(label) ? "Path" : label;
+
+            string normalizedPath;
+            try
+            {
+                normalizedPath = NormalizePathRoot(Path.GetFullPath(path ?? string.Empty));
+            }
+            catch (Exception ex)
+            {
+                diagnostic = $"{label} path is invalid: {EscapeDiagnosticText(ex.Message)}";
+                return false;
+            }
+
+            if (normalizedPath.StartsWith(@"\\", StringComparison.Ordinal) ||
+                normalizedPath.Length < 3 ||
+                !char.IsLetter(normalizedPath[0]) ||
+                normalizedPath[1] != Path.VolumeSeparatorChar ||
+                (normalizedPath[2] != Path.DirectorySeparatorChar &&
+                 normalizedPath[2] != Path.AltDirectorySeparatorChar))
+            {
+                diagnostic =
+                    $"{label} '{EscapeDiagnosticText(normalizedPath)}' is not on a local drive-letter volume.";
+                return false;
+            }
+
+            var volumeRoot = new StringBuilder(32768);
+            if (!GetVolumePathName(normalizedPath, volumeRoot, (uint)volumeRoot.Capacity))
+            {
+                diagnostic =
+                    $"Unable to resolve the volume for {label.ToLowerInvariant()} '{EscapeDiagnosticText(normalizedPath)}': {new Win32Exception(Marshal.GetLastWin32Error()).Message}";
+                return false;
+            }
+
+            var driveType = GetDriveType(volumeRoot.ToString());
+            if (driveType == FixedDriveType)
+                return true;
+
+            diagnostic =
+                $"{label} '{EscapeDiagnosticText(normalizedPath)}' is not on a local fixed drive. Network, mapped, removable, and virtual application paths are rejected.";
+            return false;
+        }
+
+        internal static bool TryValidateTrustedDirectoryPath(
+            string directory,
+            string label,
+            out string diagnostic)
+        {
+            return TryValidateTrustedDirectoryPathCore(
+                directory,
+                label,
+                allowMissingTarget: false,
+                traceFailures: true,
+                out diagnostic);
+        }
+
+        internal static bool TryValidateTrustedDirectoryCreationPath(
+            string directory,
+            string label,
+            out string diagnostic)
+        {
+            return TryValidateTrustedDirectoryPathCore(
+                directory,
+                label,
+                allowMissingTarget: true,
+                traceFailures: true,
+                out diagnostic);
+        }
+
+        private static bool TryValidateTrustedDirectoryPathCore(
+            string directory,
+            string label,
+            bool allowMissingTarget,
+            bool traceFailures,
+            out string diagnostic)
+        {
+            diagnostic = null;
+            var normalizedDirectory = NormalizePathDirectoryCore(directory, traceFailures);
+            if (normalizedDirectory == null)
+            {
+                diagnostic = $"{label} path is invalid.";
+                return false;
+            }
+
+            if (!TryValidateLocalFixedPath(normalizedDirectory, label, out diagnostic))
+                return false;
+
+            var current = normalizedDirectory;
+            var missingDirectoryCount = 0;
+            var creationParentValidated = false;
+            while (!string.IsNullOrWhiteSpace(current))
+            {
+                if (!TryGetExistingAttributes(current, out var attributes, out diagnostic))
+                {
+                    if (!string.IsNullOrWhiteSpace(diagnostic))
+                        return false;
+                    if (!allowMissingTarget)
+                    {
+                        diagnostic =
+                            $"{label} '{EscapeDiagnosticText(normalizedDirectory)}' is not an accessible directory.";
+                        return false;
+                    }
+
+                    missingDirectoryCount++;
+                }
+                else
+                {
+                    if ((attributes & FileAttributes.Directory) == 0)
+                    {
+                        diagnostic =
+                            $"{label} path entry '{EscapeDiagnosticText(current)}' is not a directory.";
+                        return false;
+                    }
+                    if ((attributes & FileAttributes.ReparsePoint) != 0)
+                    {
+                        diagnostic = $"{label} path entry '{EscapeDiagnosticText(current)}' is a reparse point.";
+                        return false;
+                    }
+
+                    var isExistingTarget =
+                        missingDirectoryCount == 0 &&
+                        string.Equals(current, normalizedDirectory, StringComparison.OrdinalIgnoreCase);
+                    var isCreationParent = missingDirectoryCount > 0 && !creationParentValidated;
+                    if (isCreationParent && missingDirectoryCount > 1)
+                    {
+                        diagnostic =
+                            $"{label} '{EscapeDiagnosticText(normalizedDirectory)}' requires creating multiple missing directory components. Only one protected leaf may be created below an existing, non-replaceable parent because intermediate directories could be controlled by non-administrative users.";
+                        return false;
+                    }
+
+                    var unsafeDirectory = isExistingTarget
+                        ? IsPotentiallyUserWritableDirectoryCore(current, traceFailures)
+                        : IsPotentiallyUserReplaceableAncestorCore(current, traceFailures);
+                    if (unsafeDirectory)
+                    {
+                        diagnostic =
+                            $"{label} path entry '{EscapeDiagnosticText(current)}' can be replaced by or is owned by non-administrative users.";
+                        return false;
+                    }
+
+                    if (isCreationParent)
+                        creationParentValidated = true;
+                }
+
+                var trimmed = current.TrimEnd(
+                    Path.DirectorySeparatorChar,
+                    Path.AltDirectorySeparatorChar);
+                var parent = Path.GetDirectoryName(trimmed);
+                if (string.IsNullOrWhiteSpace(parent) ||
+                    string.Equals(parent, current, StringComparison.OrdinalIgnoreCase))
+                    break;
+                current = parent;
+            }
+
+            return true;
+        }
+
         private static bool TryValidateTrustedFilePathCore(string file, string label, out string diagnostic,
             bool traceFailures)
         {
@@ -1133,6 +1570,9 @@ namespace WireSockUI
                 diagnostic = $"{label} path is invalid.";
                 return false;
             }
+
+            if (!TryValidateLocalFixedPath(normalizedFile, label, out diagnostic))
+                return false;
 
             if (!TryGetExistingAttributes(normalizedFile, out var fileAttributes, out diagnostic))
             {
@@ -1315,25 +1755,43 @@ namespace WireSockUI
                    string.Equals(
                        sid.Value,
                        "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464",
-                       StringComparison.OrdinalIgnoreCase);
+                       StringComparison.OrdinalIgnoreCase)
+#if DEBUG
+                   || IsCurrentElevatedUserSid(sid)
+#endif
+                ;
         }
 
         internal static bool IsTrustedOwnerSid(SecurityIdentifier sid)
         {
-            if (IsTrustedAdministrativeSid(sid))
-                return true;
+            return IsTrustedAdministrativeSid(sid);
+        }
 
-            var accountDomainSid = sid.AccountDomainSid;
-            if (accountDomainSid == null)
+#if DEBUG
+        private static bool IsCurrentElevatedUserSid(SecurityIdentifier sid)
+        {
+            if (sid == null)
                 return false;
 
-            return sid.Equals(new SecurityIdentifier(
-                       WellKnownSidType.AccountAdministratorSid,
-                       accountDomainSid)) ||
-                   sid.Equals(new SecurityIdentifier(
-                       WellKnownSidType.AccountDomainAdminsSid,
-                       accountDomainSid));
+            try
+            {
+                using (var identity = WindowsIdentity.GetCurrent(
+                           TokenAccessLevels.Query | TokenAccessLevels.Duplicate))
+                {
+                    return identity.User != null &&
+                           identity.User.Equals(sid) &&
+                           new WindowsPrincipal(identity)
+                               .IsInRole(WindowsBuiltInRole.Administrator);
+                }
+            }
+            catch (Exception ex)
+            {
+                Trace.TraceWarning(
+                    $"Unable to inspect the development-build owner SID: {ex.Message}");
+                return false;
+            }
         }
+#endif
 
         private static string NormalizePathDirectory(string directory)
         {

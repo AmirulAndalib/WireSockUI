@@ -237,6 +237,15 @@ ClientBin/
 *.dbproj.schemaview
 *.jfm
 *.pfx
+*.p12
+*.p8
+*.pem
+*.key
+.env
+.env.*
+!.env.example
+id_rsa
+id_rsa.*
 *.publishsettings
 orleans.codegen.cs
 

@@ -5,6 +5,7 @@
   </PropertyGroup>
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+    <Configurations>Debug;Release;Debug UWP;Release UWP</Configurations>
     <TargetFramework>net472-windows</TargetFramework>
     <RootNamespace>WireSockUI.Tests</RootNamespace>
     <AssemblyName>WireSockUI.Tests</AssemblyName>
@@ -13,9 +14,13 @@
     <RestoreProjectStyle>PackageReference</RestoreProjectStyle>
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
+  <PropertyGroup>
+    <DefineConstants Condition=" $(Configuration.Contains('UWP')) ">$(DefineConstants);WIRESOCKUI_ENABLE_UWP</DefineConstants>
+  </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\WireSockUI\WireSockUI.csproj" />
+    <ProjectReference Include="..\WireSockUI\WireSockUI.csproj"
+                      AdditionalProperties="WireSockUIAllowManagedOnlyBuild=true" />
     <Reference Include="System.Configuration" />
     <Reference Include="System.Windows.Forms" />
   </ItemGroup>

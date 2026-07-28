@@ -1,8 +1,10 @@
 using System;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Xml;
 using System.Xml.Linq;
@@ -39,9 +41,14 @@ namespace WireSockUI.Config
         private const long MaximumSettingsFileSizeBytes = 64 * 1024;
         private const string SettingsFileName = "PrivilegedSettings.xml";
         private const string BackupFileName = "PrivilegedSettings.xml.backup";
+        private const int MoveFileWriteThroughFlag = 0x8;
         private static readonly object SyncRoot = new object();
         private static readonly object SaveSyncRoot = new object();
         private static PrivilegedSettingsSnapshot _current = CreateDefaults();
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool MoveFileEx(string existingFileName, string newFileName, int flags);
 
         internal static string SettingsFilePath => Path.Combine(Global.SecureMainFolder, SettingsFileName);
         private static string BackupFilePath => Path.Combine(Global.SecureMainFolder, BackupFileName);
@@ -214,11 +221,11 @@ namespace WireSockUI.Config
                     {
                     }
 
-                    File.Move(SettingsFilePath, BackupFilePath);
+                    MoveFileWriteThrough(SettingsFilePath, BackupFilePath);
                     backupCreated = true;
                 }
 
-                File.Move(temporaryPath, SettingsFilePath);
+                MoveFileWriteThrough(temporaryPath, SettingsFilePath);
 
                 using (var settingsFile = SecureFileSystem.OpenFile(SettingsFilePath, true))
                     settingsFile.SetSecurity(Global.CreateAdministratorsOnlyFileSecurity());
@@ -261,6 +268,8 @@ namespace WireSockUI.Config
 
         private static void RecoverInterruptedSave()
         {
+            CleanupOrphanTransactionFiles();
+
             if (!PathExists(BackupFilePath))
                 return;
 
@@ -296,23 +305,78 @@ namespace WireSockUI.Config
             }
 
             Load(BackupFilePath);
-            File.Move(BackupFilePath, SettingsFilePath);
+            MoveFileWriteThrough(BackupFilePath, SettingsFilePath);
+        }
+
+        private static void CleanupOrphanTransactionFiles()
+        {
+            var entries = 0;
+            using (SecureFileSystem.OpenDirectory(Global.SecureMainFolder, false))
+            {
+                foreach (var path in Directory.EnumerateFileSystemEntries(
+                             Global.SecureMainFolder,
+                             "*",
+                             SearchOption.TopDirectoryOnly))
+                {
+                    entries++;
+                    if (entries > Global.MaxSecuredTreeEntries)
+                        throw new InvalidDataException(
+                            $"The secured settings folder contains more than {Global.MaxSecuredTreeEntries} entries while recovering protected settings.");
+
+                    if (!IsManagedTransactionFileName(Path.GetFileName(path)))
+                        continue;
+
+                    try
+                    {
+                        DeleteTransactionFile(path);
+                    }
+                    catch (FileNotFoundException)
+                    {
+                    }
+                    catch (DirectoryNotFoundException)
+                    {
+                    }
+                }
+            }
+        }
+
+        private static bool IsManagedTransactionFileName(string fileName)
+        {
+            const string prefix = "." + SettingsFileName + ".";
+            if (string.IsNullOrEmpty(fileName) ||
+                !fileName.StartsWith(prefix, StringComparison.Ordinal))
+                return false;
+
+            string suffix;
+            if (fileName.EndsWith(".tmp", StringComparison.Ordinal))
+                suffix = ".tmp";
+            else if (fileName.EndsWith(".invalid", StringComparison.Ordinal))
+                suffix = ".invalid";
+            else
+                return false;
+
+            var identifierLength = fileName.Length - prefix.Length - suffix.Length;
+            if (identifierLength != 32)
+                return false;
+
+            var identifier = fileName.Substring(prefix.Length, identifierLength);
+            return Guid.TryParseExact(identifier, "N", out _);
         }
 
         private static void RestoreBackupOverInvalidSettings(Exception settingsException)
         {
             var invalidPath = Path.Combine(Global.SecureMainFolder,
                 $".{SettingsFileName}.{Guid.NewGuid():N}.invalid");
-            File.Move(SettingsFilePath, invalidPath);
+            MoveFileWriteThrough(SettingsFilePath, invalidPath);
             try
             {
-                File.Move(BackupFilePath, SettingsFilePath);
+                MoveFileWriteThrough(BackupFilePath, SettingsFilePath);
             }
             catch (Exception restoreException)
             {
                 try
                 {
-                    File.Move(invalidPath, SettingsFilePath);
+                    MoveFileWriteThrough(invalidPath, SettingsFilePath);
                 }
                 catch (Exception rollbackException)
                 {
@@ -337,8 +401,16 @@ namespace WireSockUI.Config
         private static void RestoreBackupAfterFailedSave(string temporaryPath)
         {
             if (PathExists(SettingsFilePath))
-                File.Move(SettingsFilePath, temporaryPath);
-            File.Move(BackupFilePath, SettingsFilePath);
+                MoveFileWriteThrough(SettingsFilePath, temporaryPath);
+            MoveFileWriteThrough(BackupFilePath, SettingsFilePath);
+        }
+
+        private static void MoveFileWriteThrough(string sourcePath, string destinationPath)
+        {
+            if (!MoveFileEx(sourcePath, destinationPath, MoveFileWriteThroughFlag))
+                throw new Win32Exception(
+                    Marshal.GetLastWin32Error(),
+                    $"Unable to move protected settings file '{sourcePath}' to '{destinationPath}'.");
         }
 
         private static void DeleteTransactionFile(string path)

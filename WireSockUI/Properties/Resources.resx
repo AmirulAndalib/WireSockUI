@@ -386,10 +386,15 @@
     <value>Log level</value>
   </data>
   <data name="SettingsProfiles" xml:space="preserve">
-    <value>Open profiles folder</value>
+    <value>Copy profiles folder path</value>
   </data>
   <data name="SettingsProfilesFolderError" xml:space="preserve">
-    <value>Error opening profiles folder: {0}</value>
+    <value>Error copying profiles folder path: {0}</value>
+  </data>
+  <data name="SettingsProfilesFolderCopied" xml:space="preserve">
+    <value>The profiles folder path was copied to the clipboard:
+
+{0}</value>
   </data>
   <data name="SettingsSave" xml:space="preserve">
     <value>Save</value>

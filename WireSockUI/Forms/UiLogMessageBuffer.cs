@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 
 namespace WireSockUI.Forms
 {
@@ -14,6 +15,7 @@ namespace WireSockUI.Forms
         private readonly object _syncRoot = new object();
 
         private long _droppedMessages;
+        private long _dispatcherGeneration;
         private bool _dispatchPending;
         private bool _disposed;
 
@@ -34,6 +36,7 @@ namespace WireSockUI.Forms
         internal void Enqueue(WireSockManager.LogMessage message)
         {
             var shouldSchedule = false;
+            long dispatcherGeneration = 0;
             lock (_syncRoot)
             {
                 if (_disposed)
@@ -49,37 +52,52 @@ namespace WireSockUI.Forms
                 if (!_dispatchPending)
                 {
                     _dispatchPending = true;
+                    dispatcherGeneration = _dispatcherGeneration;
                     shouldSchedule = true;
                 }
             }
 
-            if (shouldSchedule && !_schedule(DrainBatch))
-                CancelPendingDispatch();
+            if (shouldSchedule)
+                ScheduleOrCancel(() => DrainBatch(dispatcherGeneration), dispatcherGeneration);
         }
 
         internal void RetryPendingDispatch()
         {
             var shouldSchedule = false;
+            long dispatcherGeneration = 0;
             lock (_syncRoot)
             {
                 if (!_disposed && _messages.Count > 0 && !_dispatchPending)
                 {
                     _dispatchPending = true;
+                    dispatcherGeneration = _dispatcherGeneration;
                     shouldSchedule = true;
                 }
             }
 
-            if (shouldSchedule && !_schedule(DrainBatch))
-                CancelPendingDispatch();
+            if (shouldSchedule)
+                ScheduleOrCancel(() => DrainBatch(dispatcherGeneration), dispatcherGeneration);
         }
 
-        private void DrainBatch()
+        internal void NotifyDispatcherReset()
+        {
+            lock (_syncRoot)
+            {
+                if (_disposed)
+                    return;
+
+                _dispatcherGeneration++;
+                _dispatchPending = false;
+            }
+        }
+
+        private void DrainBatch(long dispatcherGeneration)
         {
             List<WireSockManager.LogMessage> batch;
             var scheduleNext = false;
             lock (_syncRoot)
             {
-                if (_disposed)
+                if (_disposed || dispatcherGeneration != _dispatcherGeneration)
                     return;
 
                 batch = new List<WireSockManager.LogMessage>(_batchSize + 1);
@@ -103,15 +121,34 @@ namespace WireSockUI.Forms
             }
             finally
             {
-                if (scheduleNext && !_schedule(DrainBatch))
-                    CancelPendingDispatch();
+                if (scheduleNext)
+                    ScheduleOrCancel(() => DrainBatch(dispatcherGeneration), dispatcherGeneration);
             }
         }
 
-        private void CancelPendingDispatch()
+        private void ScheduleOrCancel(Action callback, long dispatcherGeneration)
+        {
+            var scheduled = false;
+            try
+            {
+                scheduled = _schedule(callback);
+            }
+            catch (Exception ex)
+            {
+                Trace.TraceWarning($"Unable to schedule queued native log messages: {ex.Message}");
+            }
+
+            if (!scheduled)
+                CancelPendingDispatch(dispatcherGeneration);
+        }
+
+        private void CancelPendingDispatch(long dispatcherGeneration)
         {
             lock (_syncRoot)
             {
+                if (dispatcherGeneration != _dispatcherGeneration)
+                    return;
+
                 _dispatchPending = false;
                 if (_disposed)
                     _messages.Clear();

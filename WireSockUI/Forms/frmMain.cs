@@ -35,8 +35,12 @@ namespace WireSockUI.Forms
         private const int TunnelDisconnectTimeoutMilliseconds = 10000;
         private const int NativeQueryTimeoutMilliseconds = 5000;
         private const int MaxVisibleLogMessages = 2000;
+        private const int MaxTrayProfileItems = 50;
+        private const int MaxLegacyProfilesReviewedPerLaunch = 20;
         private const int LogUiBatchSize = 256;
         private const int ShutdownDisconnectTimeoutMilliseconds = 5000;
+        private const int ShutdownSettingsTimeoutMilliseconds = 5000;
+        private const int UiDispatchStartTimeoutMilliseconds = 5000;
 
         /**
          * @brief The manager that handles the Wireguard connections.
@@ -50,10 +54,18 @@ namespace WireSockUI.Forms
         private readonly BoundedRingBuffer<WireSockManager.LogMessage> _visibleLogMessages =
             new BoundedRingBuffer<WireSockManager.LogMessage>(MaxVisibleLogMessages);
         private readonly List<Image> _ownedMenuImages = new List<Image>();
+        private readonly object _uiDispatchSyncRoot = new object();
+        private readonly int _uiThreadId = Thread.CurrentThread.ManagedThreadId;
 
         private ConnectionState _currentState = ConnectionState.Disconnected;
+        private Task _activeSettingsOperation = Task.CompletedTask;
+        private FrmSettings _activeSettingsForm;
         private bool _exitRequested;
+        private bool _finalCloseAuthorized;
+        private bool _restartMonitorAfterHandleRecreation;
         private volatile bool _shutdownComplete;
+        private Task _shutdownTask;
+        private CancellationTokenSource _uiDispatchCancellation = new CancellationTokenSource();
         private Icon _ownedTrayIcon;
         private Image _inactiveStatusImage;
         private Image _connectedStatusImage;
@@ -118,7 +130,45 @@ namespace WireSockUI.Forms
         protected override void OnHandleCreated(EventArgs e)
         {
             base.OnHandleCreated(e);
+
+            var dispatchSyncRoot = _uiDispatchSyncRoot;
+            if (!_shutdownComplete && dispatchSyncRoot != null)
+            {
+                lock (dispatchSyncRoot)
+                {
+                    if (_uiDispatchCancellation == null || _uiDispatchCancellation.IsCancellationRequested)
+                    {
+                        _uiDispatchCancellation?.Dispose();
+                        _uiDispatchCancellation = new CancellationTokenSource();
+                    }
+                }
+            }
+
             _uiLogBuffer?.RetryPendingDispatch();
+            if (_tunnelSession != null && IsNativeRecoveryRequired() && !_shutdownComplete)
+            {
+                _restartMonitorAfterHandleRecreation = false;
+                SetNativeRecoveryUi(_tunnelLifecycle?.ProfileName);
+            }
+            else if (_restartMonitorAfterHandleRecreation && !_shutdownComplete)
+            {
+                _restartMonitorAfterHandleRecreation = false;
+                ResumeTunnelMonitoring();
+            }
+        }
+
+        protected override void OnHandleDestroyed(EventArgs e)
+        {
+            _uiLogBuffer?.NotifyDispatcherReset();
+            if (!_shutdownComplete &&
+                (_currentState == ConnectionState.Connected || _currentState == ConnectionState.Connecting))
+            {
+                _restartMonitorAfterHandleRecreation = true;
+                _tunnelMonitor?.Cancel();
+            }
+
+            CancelUiDispatches();
+            base.OnHandleDestroyed(e);
         }
 
         private static Bitmap GetWindowsIconBitmap(WindowsIcons.Icons icon, int size)
@@ -255,53 +305,99 @@ namespace WireSockUI.Forms
             });
         }
 
-        private void EndNativeCleanup(string profile)
+        private async Task EndNativeCleanupAsync(string profile)
         {
-            if (!_tunnelSession.EndCleanup())
-                return;
-
             if (_shutdownComplete || IsDisposed || Disposing)
-                return;
-
-            TryRunOnUiThread(() =>
             {
-                if (_currentState == ConnectionState.Disconnected)
+                _tunnelSession.EndCleanup();
+                return;
+            }
+
+            try
+            {
+                await InvokeOnUiThreadAsync(() =>
                 {
-                    SetActivateButtonEnabled(true);
-                    cmiResetKillSwitch.Enabled = true;
-                    if (TryGetProfileItem(profile, out var profileItem))
-                        profileItem.ImageKey = ConnectionState.Disconnected.ToString();
-                }
-                else if (_currentState == ConnectionState.Indeterminate)
-                {
-                    SetActivateButtonEnabled(false);
-                    cmiResetKillSwitch.Enabled = true;
-                }
-            });
+                    if (!_tunnelSession.EndCleanup())
+                        return Task.CompletedTask;
+
+                    RefreshControlsAfterNativeCleanup(profile);
+                    return Task.CompletedTask;
+                }, GetUiDispatchToken(), UiDispatchStartTimeoutMilliseconds).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                // If the form's dispatcher disappeared before reconciliation, fail closed. Releasing
+                // the cleanup count is safe only after the recovery gate has been latched.
+                _tunnelSession.RequireRecovery();
+                _tunnelSession.EndCleanup();
+                Global.NativeRecoveryMarkers.Write("native cleanup UI reconciliation failure", ex.Message);
+                Trace.TraceWarning($"Unable to reconcile native cleanup with the UI: {ex.Message}");
+            }
+        }
+
+        private void RefreshControlsAfterNativeCleanup(string profile)
+        {
+            if (_currentState == ConnectionState.Disconnected)
+            {
+                SetActivateButtonEnabled(true);
+                cmiResetKillSwitch.Enabled = true;
+                if (TryGetProfileItem(profile, out var profileItem))
+                    profileItem.ImageKey = ConnectionState.Disconnected.ToString();
+            }
+            else if (_currentState == ConnectionState.Indeterminate)
+            {
+                SetActivateButtonEnabled(false);
+                cmiResetKillSwitch.Enabled = true;
+            }
         }
 
         private void MarkNativeRecoveryRequired(string profile, string context,
             NativeRecoveryMarkerLease markerLease = null)
         {
+            var firstTransition = RecordNativeRecoveryRequired(context, markerLease);
+            TryRunOnUiThread(() => RenderNativeRecoveryRequired(profile, firstTransition));
+        }
+
+        private async Task MarkNativeRecoveryRequiredAsync(string profile, string context,
+            NativeRecoveryMarkerLease markerLease = null)
+        {
+            var firstTransition = RecordNativeRecoveryRequired(context, markerLease);
+            try
+            {
+                await InvokeOnUiThreadAsync(() =>
+                {
+                    RenderNativeRecoveryRequired(profile, firstTransition);
+                    return Task.CompletedTask;
+                }, GetUiDispatchToken(), UiDispatchStartTimeoutMilliseconds).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Trace.TraceWarning($"Unable to display native recovery state: {ex.Message}");
+            }
+        }
+
+        private bool RecordNativeRecoveryRequired(string context, NativeRecoveryMarkerLease markerLease)
+        {
             const string diagnostic =
                 "Native WireSock cleanup did not finish safely. New tunnel operations are disabled until recovery succeeds or WireSock UI is restarted.";
             WriteOrUpdateNativeRecoveryMarker(markerLease, context, diagnostic);
 
-            var wasAlreadyMarked = !_tunnelSession.RequireRecovery();
+            var firstTransition = _tunnelSession.RequireRecovery();
             Trace.TraceWarning(
                 $"Native WireSock cleanup did not finish safely after {context}. New tunnel operations are disabled until recovery succeeds or WireSock UI is restarted.");
+            return firstTransition;
+        }
 
-            TryRunOnUiThread(() =>
-            {
-                if (!IsNativeRecoveryRequired())
-                    return;
+        private void RenderNativeRecoveryRequired(string profile, bool firstTransition)
+        {
+            if (_shutdownComplete || IsDisposed || Disposing || !IsNativeRecoveryRequired())
+                return;
 
-                SetNativeRecoveryUi(profile);
+            SetNativeRecoveryUi(profile);
 
-                if (!wasAlreadyMarked)
-                    MessageBox.Show(Resources.TunnelNativeRecoveryRequired, Resources.TunnelErrorTitle,
-                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            });
+            if (firstTransition)
+                MessageBox.Show(Resources.TunnelNativeRecoveryRequired, Resources.TunnelErrorTitle,
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
 
         private static NativeRecoveryMarkerLease WriteOrUpdateNativeRecoveryMarker(
@@ -323,18 +419,32 @@ namespace WireSockUI.Forms
             if (!string.IsNullOrWhiteSpace(diagnostic))
                 Trace.TraceWarning($"Native cleanup failure after {context}: {diagnostic}");
 
-            var networkLockRecovered = await TryResetNetworkLockAfterNativeCleanupFailureAsync(context);
+            if (_tunnelLifecycle.HasTunnelHandle)
+            {
+                await MarkNativeRecoveryRequiredAsync(profile, string.IsNullOrWhiteSpace(diagnostic)
+                        ? context
+                        : $"{context}: {diagnostic}",
+                    markerLease).ConfigureAwait(false);
+                return false;
+            }
+
+            var networkLockRecovered = await TryResetNetworkLockAfterNativeCleanupFailureAsync(context)
+                .ConfigureAwait(false);
             if (!_tunnelLifecycle.HasTunnelHandle && networkLockRecovered)
             {
                 Global.NativeRecoveryMarkers.TryDelete(markerLease);
-                TryRunOnUiThread(() => UpdateState(ConnectionState.Disconnected, false, profile));
+                await InvokeOnUiThreadAsync(() =>
+                {
+                    UpdateState(ConnectionState.Disconnected, false, profile);
+                    return Task.CompletedTask;
+                }, GetUiDispatchToken(), UiDispatchStartTimeoutMilliseconds).ConfigureAwait(false);
                 return true;
             }
 
-            MarkNativeRecoveryRequired(profile, string.IsNullOrWhiteSpace(diagnostic)
+            await MarkNativeRecoveryRequiredAsync(profile, string.IsNullOrWhiteSpace(diagnostic)
                     ? context
                     : $"{context}: {diagnostic}",
-                markerLease);
+                markerLease).ConfigureAwait(false);
             return false;
         }
 
@@ -360,8 +470,23 @@ namespace WireSockUI.Forms
             _tunnelMonitor.Cancel();
         }
 
+        private void ResumeTunnelMonitoring()
+        {
+            if (_shutdownComplete || IsDisposed || Disposing ||
+                IsNativeCleanupInProgress() || IsNativeRecoveryRequired())
+                return;
+
+            if (_currentState == ConnectionState.Connected)
+                StartTunnelStateMonitor();
+            else if (_currentState == ConnectionState.Connecting)
+                StartTunnelConnectionMonitor(Task.CompletedTask);
+        }
+
         private bool TryBeginTunnelOperation(bool showBlockedMessage = true)
         {
+            if (_exitRequested || _shutdownComplete)
+                return false;
+
             if (_tunnelSession.TryBeginOperation(out var blockReason))
                 return true;
 
@@ -500,28 +625,51 @@ namespace WireSockUI.Forms
                 if (!cleanupFailed)
                 {
                     Global.NativeRecoveryMarkers.TryDelete(markerLease);
-                    TryRunOnUiThread(() => UpdateState(ConnectionState.Disconnected, false, profile));
+                    await InvokeOnUiThreadAsync(() =>
+                    {
+                        UpdateState(ConnectionState.Disconnected, false, profile);
+                        return Task.CompletedTask;
+                    }, GetUiDispatchToken(), UiDispatchStartTimeoutMilliseconds).ConfigureAwait(false);
                 }
             }
             finally
             {
-                EndNativeCleanup(profile);
+                await EndNativeCleanupAsync(profile).ConfigureAwait(false);
             }
         }
 
-        private void Shutdown()
+        private async Task ShutdownAsync()
         {
             if (_shutdownComplete)
                 return;
 
             _shutdownComplete = true;
-            _currentState = ConnectionState.Disconnected;
-
             _uiLogBuffer.Dispose();
             _tunnelMonitor.Dispose();
+            _activeSettingsForm?.CancelPendingOperations();
 
-            DisposeTunnelLifecycleWithTimeout();
+            try
+            {
+                var activeSettingsOperation = _activeSettingsOperation ?? Task.CompletedTask;
+                if (!await BoundedTaskWaiter.WaitAsync(
+                        activeSettingsOperation,
+                        ShutdownSettingsTimeoutMilliseconds))
+                {
+                    const string diagnostic =
+                        "A settings operation was still pending when application shutdown continued.";
+                    Trace.TraceWarning(diagnostic);
+                    Global.NativeRecoveryMarkers.Write("settings shutdown timeout", diagnostic);
+                    _tunnelSession.RequireRecovery();
+                }
+            }
+            catch (Exception ex)
+            {
+                Trace.TraceWarning($"Settings operation failed while application shutdown was pending: {ex.Message}");
+            }
 
+            CancelUiDispatches();
+            await ShutdownTunnelLifecycleAsync();
+            _currentState = ConnectionState.Disconnected;
             trayIcon.Visible = false;
             SetTrayIcon(null, false);
             DisposeStatusImages();
@@ -544,15 +692,14 @@ namespace WireSockUI.Forms
             _ownedMenuImages.Clear();
         }
 
-        private void DisposeTunnelLifecycleWithTimeout()
+        private async Task ShutdownTunnelLifecycleAsync()
         {
             if (_tunnelLifecycle == null)
                 return;
 
             try
             {
-                var cleanupTask = _tunnelLifecycle.ShutdownAsync(ShutdownDisconnectTimeoutMilliseconds);
-                var cleanupResult = cleanupTask.GetAwaiter().GetResult();
+                var cleanupResult = await _tunnelLifecycle.ShutdownAsync(ShutdownDisconnectTimeoutMilliseconds);
                 if (cleanupResult.TimedOut)
                 {
                     Trace.TraceWarning(
@@ -560,7 +707,7 @@ namespace WireSockUI.Forms
                     var markerLease = Global.NativeRecoveryMarkers.Write("shutdown timeout",
                         "The native cleanup call was still running when WireSock UI exited. No concurrent global reset was attempted.");
 
-                    cleanupResult.PendingCompletion.ContinueWith(task =>
+                    _ = cleanupResult.PendingCompletion.ContinueWith(task =>
                         {
                             if (task.IsFaulted)
                             {
@@ -611,6 +758,16 @@ namespace WireSockUI.Forms
         {
             try
             {
+                if (_tunnelLifecycle.HasTunnelHandle)
+                {
+                    const string diagnostic =
+                        "WireSock UI refused to reset the global network lock while a tunnel handle remains allocated.";
+                    Trace.TraceWarning($"{diagnostic} Recovery context: {context}.");
+                    if (recordRecoveryMarkerOnFailure)
+                        Global.NativeRecoveryMarkers.Write(context, diagnostic);
+                    return false;
+                }
+
                 var queryResult = await _tunnelLifecycle.QueryNetworkLockAsync(NativeQueryTimeoutMilliseconds);
                 if (!queryResult.Succeeded)
                 {
@@ -662,32 +819,42 @@ namespace WireSockUI.Forms
 
             var profile = _tunnelLifecycle.ProfileName;
             BeginNativeCleanup();
-            result.PendingCompletion.ContinueWith(task =>
-                {
-                    try
-                    {
-                        if (task.IsFaulted)
-                            Trace.TraceWarning(
-                                $"Timed-out native operation after {context} faulted: {task.Exception?.GetBaseException().Message}");
-                        else if (task.IsCanceled)
-                            Trace.TraceWarning($"Timed-out native operation after {context} was canceled.");
-                        else
-                        {
-                            var completedResult = NativeOperationRecoveryPolicy.NormalizeCompletion(
-                                task.Result, context);
-                            if (!completedResult.Succeeded)
-                                Trace.TraceWarning(
-                                    $"Timed-out native operation after {context} failed: {completedResult.Diagnostic}");
-                        }
-                    }
-                    finally
-                    {
-                        EndNativeCleanup(profile);
-                    }
-                },
+            CompleteTrackedNativeOperationAsync(result.PendingCompletion, profile, context).ContinueWith(task =>
+                    Trace.TraceWarning(
+                        $"Unable to finish tracking the timed-out native operation after {context}: {task.Exception?.GetBaseException().Message}"),
                 CancellationToken.None,
-                TaskContinuationOptions.None,
+                TaskContinuationOptions.OnlyOnFaulted,
                 TaskScheduler.Default);
+        }
+
+        private async Task CompleteTrackedNativeOperationAsync<T>(
+            Task<NativeOperationResult<T>> pendingCompletion,
+            string profile,
+            string context)
+        {
+            try
+            {
+                try
+                {
+                    var completedResult = NativeOperationRecoveryPolicy.NormalizeCompletion(
+                        await pendingCompletion.ConfigureAwait(false), context);
+                    if (!completedResult.Succeeded)
+                        Trace.TraceWarning(
+                            $"Timed-out native operation after {context} failed: {completedResult.Diagnostic}");
+                }
+                catch (OperationCanceledException)
+                {
+                    Trace.TraceWarning($"Timed-out native operation after {context} was canceled.");
+                }
+                catch (Exception ex)
+                {
+                    Trace.TraceWarning($"Timed-out native operation after {context} faulted: {ex.Message}");
+                }
+            }
+            finally
+            {
+                await EndNativeCleanupAsync(profile).ConfigureAwait(false);
+            }
         }
 
         private async Task ShowPendingNativeRecoveryWarningAsync()
@@ -743,21 +910,61 @@ namespace WireSockUI.Forms
             if (_shutdownComplete || IsDisposed || Disposing)
                 return;
 
+            TryDispatchOnUiThread(
+                this,
+                action,
+                _uiThreadId,
+                IsHandleCreated,
+                GetUiDispatchToken());
+        }
+
+        internal static bool TryDispatchOnUiThread(
+            ISynchronizeInvoke synchronizer,
+            Action action,
+            int uiThreadId,
+            bool isHandleCreated,
+            CancellationToken cancellationToken)
+        {
+            if (synchronizer == null)
+                throw new ArgumentNullException(nameof(synchronizer));
+            if (action == null)
+                throw new ArgumentNullException(nameof(action));
+            if (uiThreadId <= 0)
+                throw new ArgumentOutOfRangeException(nameof(uiThreadId));
+            if (cancellationToken.IsCancellationRequested)
+                return false;
+
+            if (Thread.CurrentThread.ManagedThreadId == uiThreadId)
+            {
+                RunUiActionSafely(action);
+                return true;
+            }
+
+            // Control.InvokeRequired can return false on a worker when no control in
+            // the parent chain currently owns a handle. Never use it to authorize
+            // inline execution: a stale handle snapshot may only be used to attempt
+            // marshaling, which fails safely if destruction wins the race.
+            if (!isHandleCreated)
+                return false;
+
             try
             {
-                if (!IsHandleCreated)
-                    return;
-
-                if (InvokeRequired)
-                    BeginInvoke(new Action(() => RunUiActionSafely(action)));
-                else
-                    RunUiActionSafely(action);
+                synchronizer.BeginInvoke(new Action(() =>
+                {
+                    if (!cancellationToken.IsCancellationRequested)
+                    {
+                        RunUiActionSafely(action);
+                    }
+                }), Array.Empty<object>());
+                return true;
             }
             catch (ObjectDisposedException)
             {
+                return false;
             }
             catch (InvalidOperationException)
             {
+                return false;
             }
         }
 
@@ -939,64 +1146,160 @@ namespace WireSockUI.Forms
             return true;
         }
 
-        private Task HandleTunnelMonitorUpdateAsync(TunnelMonitorUpdate update)
+        private async Task HandleTunnelMonitorUpdateAsync(TunnelMonitorUpdate update)
         {
             if (_shutdownComplete || IsDisposed || Disposing || !IsHandleCreated)
-                return Task.CompletedTask;
+                return;
 
-            return InvokeOnUiThreadAsync(this, () => HandleTunnelMonitorUpdateOnUiThreadAsync(update));
+            var dispatchToken = GetUiDispatchToken();
+            try
+            {
+                await InvokeOnUiThreadAsync(
+                    () => HandleTunnelMonitorUpdateOnUiThreadAsync(update),
+                    dispatchToken,
+                    UiDispatchStartTimeoutMilliseconds).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (
+                dispatchToken.IsCancellationRequested ||
+                _shutdownComplete ||
+                IsDisposed ||
+                Disposing ||
+                !IsHandleCreated)
+            {
+            }
+            catch (TimeoutException ex)
+            {
+                MarkNativeRecoveryRequired(
+                    _tunnelLifecycle.ProfileName,
+                    $"tunnel monitor UI dispatch timeout: {ex.Message}");
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            catch (InvalidOperationException) when (!IsHandleCreated)
+            {
+            }
         }
 
-        internal static Task InvokeOnUiThreadAsync(ISynchronizeInvoke synchronizer, Func<Task> action)
+        private Task InvokeOnUiThreadAsync(
+            Func<Task> action,
+            CancellationToken cancellationToken,
+            int dispatchStartTimeoutMilliseconds)
+        {
+            return InvokeOnUiThreadAsync(
+                this,
+                action,
+                _uiThreadId,
+                () => IsHandleCreated,
+                cancellationToken,
+                dispatchStartTimeoutMilliseconds);
+        }
+
+        internal static async Task InvokeOnUiThreadAsync(
+            ISynchronizeInvoke synchronizer,
+            Func<Task> action,
+            int uiThreadId,
+            Func<bool> isHandleCreated,
+            CancellationToken cancellationToken,
+            int dispatchStartTimeoutMilliseconds)
         {
             if (synchronizer == null)
                 throw new ArgumentNullException(nameof(synchronizer));
             if (action == null)
                 throw new ArgumentNullException(nameof(action));
+            if (uiThreadId <= 0)
+                throw new ArgumentOutOfRangeException(nameof(uiThreadId));
+            if (isHandleCreated == null)
+                throw new ArgumentNullException(nameof(isHandleCreated));
+            if (dispatchStartTimeoutMilliseconds != Timeout.Infinite &&
+                dispatchStartTimeoutMilliseconds <= 0)
+                throw new ArgumentOutOfRangeException(nameof(dispatchStartTimeoutMilliseconds));
 
-            bool invokeRequired;
-            try
+            if (Thread.CurrentThread.ManagedThreadId == uiThreadId)
             {
-                invokeRequired = synchronizer.InvokeRequired;
-            }
-            catch (ObjectDisposedException)
-            {
-                return Task.CompletedTask;
-            }
-            catch (InvalidOperationException)
-            {
-                return Task.CompletedTask;
+                cancellationToken.ThrowIfCancellationRequested();
+                await action();
+                return;
             }
 
-            if (!invokeRequired)
-                return action();
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!isHandleCreated())
+                throw new InvalidOperationException(
+                    "The UI dispatcher does not currently have a live window handle.");
 
+            var callbackState = 0;
+            var dispatchStarted = new TaskCompletionSource<object>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
             var completion = new TaskCompletionSource<object>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
             try
             {
                 synchronizer.BeginInvoke(new Action(async () =>
                 {
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        if (Interlocked.CompareExchange(ref callbackState, 2, 0) == 0)
+                        {
+                            dispatchStarted.TrySetCanceled();
+                            completion.TrySetCanceled();
+                        }
+
+                        return;
+                    }
+
+                    if (Interlocked.CompareExchange(ref callbackState, 1, 0) != 0)
+                        return;
+
+                    dispatchStarted.TrySetResult(null);
                     try
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         await action();
                         completion.TrySetResult(null);
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        completion.TrySetCanceled();
                     }
                     catch (Exception ex)
                     {
                         completion.TrySetException(ex);
                     }
                 }), Array.Empty<object>());
-                return completion.Task;
             }
             catch (ObjectDisposedException)
             {
-                return Task.CompletedTask;
+                cancellationToken.ThrowIfCancellationRequested();
+                throw;
             }
             catch (InvalidOperationException)
             {
-                return Task.CompletedTask;
+                cancellationToken.ThrowIfCancellationRequested();
+                throw;
             }
+
+            using (var startWaitCancellation =
+                   CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            {
+                var startTimeout = Task.Delay(dispatchStartTimeoutMilliseconds, startWaitCancellation.Token);
+                var completed = await Task.WhenAny(dispatchStarted.Task, startTimeout).ConfigureAwait(false);
+                if (completed != dispatchStarted.Task)
+                {
+                    if (Interlocked.CompareExchange(ref callbackState, 2, 0) == 0)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        throw new TimeoutException(
+                            $"The UI dispatcher did not start the callback within {dispatchStartTimeoutMilliseconds} ms.");
+                    }
+
+                    // The callback claimed execution concurrently with timeout or cancellation.
+                    await dispatchStarted.Task.ConfigureAwait(false);
+                }
+
+                startWaitCancellation.Cancel();
+            }
+
+            await completion.Task.ConfigureAwait(false);
         }
 
         private async Task HandleTunnelMonitorUpdateOnUiThreadAsync(TunnelMonitorUpdate update)
@@ -1049,6 +1352,15 @@ namespace WireSockUI.Forms
             catch (Exception ex)
             {
                 Trace.TraceError($"Tunnel monitor update handling failed unexpectedly: {ex.Message}");
+                TryRequireTunnelMonitorRecovery(
+                    ex,
+                    "tunnel monitor update handling failure",
+                    () => !_shutdownComplete && !IsDisposed && !Disposing &&
+                          update != null &&
+                          update.Generation == CurrentTunnelGeneration(),
+                    recoveryDiagnostic => MarkNativeRecoveryRequired(
+                        _tunnelLifecycle.ProfileName,
+                        recoveryDiagnostic));
             }
         }
 
@@ -1096,7 +1408,36 @@ namespace WireSockUI.Forms
             catch (Exception ex)
             {
                 Trace.TraceError($"Unable to recover from a tunnel monitor failure: {ex.Message}");
+                TryRequireTunnelMonitorRecovery(
+                    ex,
+                    "tunnel monitor recovery failure",
+                    () => !_shutdownComplete && !IsDisposed && !Disposing &&
+                          generation == CurrentTunnelGeneration(),
+                    recoveryDiagnostic => MarkNativeRecoveryRequired(
+                        _tunnelLifecycle.ProfileName,
+                        recoveryDiagnostic));
             }
+        }
+
+        internal static bool TryRequireTunnelMonitorRecovery(
+            Exception exception,
+            string context,
+            Func<bool> shouldRequireRecovery,
+            Action<string> requireRecovery)
+        {
+            if (exception == null)
+                throw new ArgumentNullException(nameof(exception));
+            if (string.IsNullOrWhiteSpace(context))
+                throw new ArgumentException("A recovery context is required.", nameof(context));
+            if (shouldRequireRecovery == null)
+                throw new ArgumentNullException(nameof(shouldRequireRecovery));
+            if (requireRecovery == null)
+                throw new ArgumentNullException(nameof(requireRecovery));
+            if (!shouldRequireRecovery())
+                return false;
+
+            requireRecovery($"{context}: {exception.Message}");
+            return true;
         }
 
         private async Task HandleTunnelQueryFailureAsync(int generation, string diagnostic)
@@ -1315,19 +1656,58 @@ namespace WireSockUI.Forms
                     }
                     finally
                     {
-                        EndNativeCleanup(profile);
+                        try
+                        {
+                            if (!cleanupFailed && !IsNativeRecoveryRequired())
+                            {
+                                await InvokeOnUiThreadAsync(() =>
+                                {
+                                    if (!_shutdownComplete &&
+                                        generation == CurrentTunnelGeneration() &&
+                                        (_currentState == ConnectionState.Connecting ||
+                                         _currentState == ConnectionState.Indeterminate))
+                                        UpdateState(ConnectionState.Disconnected, false, profile);
+
+                                    return Task.CompletedTask;
+                                }, GetUiDispatchToken(), UiDispatchStartTimeoutMilliseconds).ConfigureAwait(false);
+                            }
+                        }
+                        finally
+                        {
+                            await EndNativeCleanupAsync(profile).ConfigureAwait(false);
+                        }
                     }
                 }
             }
+        }
 
-            TryRunOnUiThread(() =>
+        private CancellationToken GetUiDispatchToken()
+        {
+            var dispatchSyncRoot = _uiDispatchSyncRoot;
+            if (dispatchSyncRoot == null)
+                return new CancellationToken(true);
+
+            lock (dispatchSyncRoot)
+                return _uiDispatchCancellation?.Token ?? new CancellationToken(true);
+        }
+
+        private void CancelUiDispatches()
+        {
+            var dispatchSyncRoot = _uiDispatchSyncRoot;
+            if (dispatchSyncRoot == null)
+                return;
+
+            CancellationTokenSource cancellation;
+            lock (dispatchSyncRoot)
+                cancellation = _uiDispatchCancellation;
+
+            try
             {
-                if (!cleanupDelegated && !cleanupFailed && !IsNativeRecoveryRequired() && !_shutdownComplete &&
-                    generation == CurrentTunnelGeneration() &&
-                    (_currentState == ConnectionState.Connecting ||
-                     _currentState == ConnectionState.Indeterminate))
-                    UpdateState(ConnectionState.Disconnected, false, profile);
-            });
+                cancellation?.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
         }
 
         private async Task HandleTunnelInactiveAsync(int generation)
@@ -1363,44 +1743,47 @@ namespace WireSockUI.Forms
         /// <param name="selectedProfile">Optional profile to automatically select</param>
         private void LoadProfiles(string selectedProfile = "")
         {
+            ClearLoadedProfiles();
             var catalogResult = _profileCatalog.Load();
             if (!catalogResult.Succeeded)
             {
+                SetActivateButtonEnabled(false);
                 MessageBox.Show(string.Format(Resources.ProfileEnumerationError, catalogResult.Exception.Message),
                     Resources.ProfileError, MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
 
             var profiles = catalogResult.Profiles;
-            lstProfiles.Items.Clear();
 
             lstProfiles.Items.AddRange(profiles
                 .Select(p => new ListViewItem(p, ConnectionState.Disconnected.ToString()) { Name = p }).ToArray());
-
-            // Clear any previously loaded tunnels
-            for (var i = mnuContext.Items.Count - 1; i >= 0; i--)
-            {
-                var item = mnuContext.Items[i];
-
-                if (Equals(item.Tag, "tunnel"))
-                {
-                    mnuContext.Items.RemoveAt(i);
-                    item.Dispose();
-                }
-            }
 
             if (profiles.Any())
             {
                 var insertIndex = mnuContext.Items.IndexOf(cmiSepTunnels);
 
                 mnuContext.Items.Insert(insertIndex + 1, new ToolStripSeparator { Tag = "tunnel" });
+                var visibleProfiles = profiles.Take(MaxTrayProfileItems).ToArray();
+                var hiddenProfileCount = profiles.Count - visibleProfiles.Length;
+                if (hiddenProfileCount > 0)
+                {
+                    mnuContext.Items.Insert(insertIndex + 1, new ToolStripMenuItem
+                    {
+                        Tag = "tunnel",
+                        Text = $"... {hiddenProfileCount} more profiles (open WireSock UI)",
+                        Enabled = false
+                    });
+                }
 
-                foreach (var profile in profiles.Reverse<string>())
+                foreach (var profile in visibleProfiles.Reverse())
                 {
                     var item = new ToolStripMenuItem(profile) { Tag = "tunnel", Text = profile };
                     item.Click += (s, e) =>
                     {
-                        lstProfiles.Items[item.Text].Selected = true;
+                        if (!TryGetProfileItem(profile, out var profileItem))
+                            return;
+
+                        profileItem.Selected = true;
                         OnProfileClick(lstProfiles, EventArgs.Empty);
                     };
 
@@ -1419,6 +1802,24 @@ namespace WireSockUI.Forms
 
             if (_currentState != ConnectionState.Disconnected)
                 RestoreLoadedProfileTunnelState();
+        }
+
+        private void ClearLoadedProfiles()
+        {
+            lstProfiles.Items.Clear();
+            ClearProfileDetails();
+            mniDeleteTunnel.Enabled = false;
+            btnEdit.Enabled = false;
+
+            for (var i = mnuContext.Items.Count - 1; i >= 0; i--)
+            {
+                var item = mnuContext.Items[i];
+                if (!Equals(item.Tag, "tunnel"))
+                    continue;
+
+                mnuContext.Items.RemoveAt(i);
+                item.Dispose();
+            }
         }
 
         private void RestoreLoadedProfileTunnelState()
@@ -1658,7 +2059,7 @@ namespace WireSockUI.Forms
             }
             finally
             {
-                EndNativeCleanup(null);
+                await EndNativeCleanupAsync(null);
             }
 
             if (_shutdownComplete || IsDisposed || Disposing)
@@ -1704,15 +2105,29 @@ namespace WireSockUI.Forms
                 return false;
             }
 
-            foreach (var profileName in pendingProfiles)
+            if (pendingProfiles.Count == 0)
+                return false;
+
+            var reviewCount = Math.Min(pendingProfiles.Count, MaxLegacyProfilesReviewedPerLaunch);
+            var remainingCount = pendingProfiles.Count - reviewCount;
+            var reviewMessage =
+                $"WireSock UI found {pendingProfiles.Count} quarantined legacy profile{(pendingProfiles.Count == 1 ? string.Empty : "s")}. " +
+                $"Reviewing a profile lets you verify its endpoint, DNS, routes, application filters, and scripts before approving it.{Environment.NewLine}{Environment.NewLine}" +
+                $"Review {(reviewCount == pendingProfiles.Count ? "them" : $"the first {reviewCount}")} now?";
+            if (remainingCount > 0)
+                reviewMessage +=
+                    $"{Environment.NewLine}{Environment.NewLine}{remainingCount} additional profile{(remainingCount == 1 ? string.Empty : "s")} will remain quarantined for a later review.";
+
+            if (MessageBox.Show(
+                    reviewMessage,
+                    Resources.EditProfileTitle,
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning) != DialogResult.Yes)
+                return false;
+
+            foreach (var profileName in pendingProfiles.Take(reviewCount))
             {
                 var profileSaved = false;
-                var review = MessageBox.Show(
-                    $"Legacy profile '{profileName}' is quarantined and cannot be activated yet.{Environment.NewLine}{Environment.NewLine}" +
-                    "Review its endpoint, DNS, routes, application filters, and scripts before approving it. Review now?",
-                    Resources.EditProfileTitle, MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
-                if (review != DialogResult.Yes)
-                    continue;
 
                 try
                 {
@@ -1773,21 +2188,72 @@ namespace WireSockUI.Forms
 
         private void OnFormClosing(object sender, FormClosingEventArgs e)
         {
-            if (e.CloseReason != CloseReason.UserClosing || _exitRequested)
+            if (e.CloseReason == CloseReason.UserClosing && !_exitRequested)
             {
-                Shutdown();
+                e.Cancel = true;
+                ShowInTaskbar = false;
+                Hide();
                 return;
             }
 
+            if (_finalCloseAuthorized)
+                return;
+
             e.Cancel = true;
+            _exitRequested = true;
+            Enabled = false;
             ShowInTaskbar = false;
             Hide();
+            CloseOwnedFormsForShutdown();
+            BeginShutdownAndClose();
         }
 
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
-            Shutdown();
             base.OnFormClosed(e);
+        }
+
+        private void BeginShutdownAndClose()
+        {
+            if (_shutdownTask != null)
+                return;
+
+            _shutdownTask = ShutdownAsync();
+            CompleteShutdownAndCloseAsync();
+        }
+
+        private void CloseOwnedFormsForShutdown()
+        {
+            foreach (var ownedForm in OwnedForms)
+            {
+                try
+                {
+                    ownedForm.Close();
+                }
+                catch (Exception ex)
+                {
+                    Trace.TraceWarning($"Unable to close an owned window during shutdown: {ex.Message}");
+                }
+            }
+        }
+
+        private async void CompleteShutdownAndCloseAsync()
+        {
+            try
+            {
+                await _shutdownTask;
+            }
+            catch (Exception ex)
+            {
+                Trace.TraceWarning($"Unexpected application shutdown failure: {ex.Message}");
+                Global.NativeRecoveryMarkers.Write("application shutdown failure", ex.Message);
+            }
+
+            if (IsDisposed || Disposing)
+                return;
+
+            _finalCloseAuthorized = true;
+            Close();
         }
 
         /// <summary>
@@ -1993,9 +2459,15 @@ namespace WireSockUI.Forms
             if (!TryBeginTunnelOperation())
                 return;
 
+            var settingsOperationCompletion = new TaskCompletionSource<object>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            _activeSettingsOperation = settingsOperationCompletion.Task;
+            FrmSettings form = null;
             try
             {
-                using (var form = new FrmSettings())
+                form = new FrmSettings();
+                _activeSettingsForm = form;
+                using (form)
                 {
                     var previousSettings = ApplicationSettingsSnapshot.Capture();
 
@@ -2007,20 +2479,33 @@ namespace WireSockUI.Forms
                         var requestedSettings = form.RequestedSettings;
                         var stateBeforeSettingsUpdate = _currentState;
                         var profileBeforeSettingsUpdate = _tunnelLifecycle.ProfileName;
-                        var result = await _settingsUpdateCoordinator.ApplyAsync(
-                            previousSettings,
-                            requestedSettings,
-                            _tunnelLifecycle.HasTunnelHandle,
-                            form.ApplyAutoRunChangeAsync,
-                            form.RollbackAutoRunChangeAsync,
-                            form.CommitAutoRunChangeAsync);
+                        var monitoringPaused = _currentState == ConnectionState.Connected ||
+                                               _currentState == ConnectionState.Connecting;
+                        if (monitoringPaused)
+                            CancelTunnelMonitoring();
 
-                        if (!result.Succeeded)
+                        try
                         {
-                            RestoreRuntimeStateAfterSettingsCompensation(
-                                result, stateBeforeSettingsUpdate, profileBeforeSettingsUpdate);
-                            ShowSettingsTransactionFailure(result);
-                            return;
+                            var result = await _settingsUpdateCoordinator.ApplyAsync(
+                                previousSettings,
+                                requestedSettings,
+                                _tunnelLifecycle.HasTunnelHandle,
+                                form.ApplyAutoRunChangeAsync,
+                                form.RollbackAutoRunChangeAsync,
+                                form.CommitAutoRunChangeAsync);
+
+                            if (!result.Succeeded)
+                            {
+                                RestoreRuntimeStateAfterSettingsCompensation(
+                                    result, stateBeforeSettingsUpdate, profileBeforeSettingsUpdate);
+                                ShowSettingsTransactionFailure(result);
+                                return;
+                            }
+                        }
+                        finally
+                        {
+                            if (monitoringPaused)
+                                ResumeTunnelMonitoring();
                         }
                     }
                 }
@@ -2028,11 +2513,17 @@ namespace WireSockUI.Forms
             catch (Exception ex)
             {
                 Trace.TraceWarning($"Unable to apply WireSock UI settings: {ex.Message}");
-                MessageBox.Show(ex.Message, Resources.TunnelErrorTitle, MessageBoxButtons.OK, MessageBoxIcon.Error);
+                if (!_shutdownComplete && !IsDisposed && !Disposing)
+                    MessageBox.Show(ex.Message, Resources.TunnelErrorTitle, MessageBoxButtons.OK,
+                        MessageBoxIcon.Error);
             }
             finally
             {
+                if (ReferenceEquals(_activeSettingsForm, form))
+                    _activeSettingsForm = null;
                 EndTunnelOperation();
+                _activeSettingsOperation = Task.CompletedTask;
+                settingsOperationCompletion.TrySetResult(null);
             }
         }
 
@@ -2099,7 +2590,8 @@ namespace WireSockUI.Forms
                 SetNativeRecoveryUi(_tunnelLifecycle.ProfileName);
             }
 
-            MessageBox.Show(message, Resources.TunnelErrorTitle, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            if (!_shutdownComplete && !IsDisposed && !Disposing)
+                MessageBox.Show(message, Resources.TunnelErrorTitle, MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
 
         private async Task<NativeOperationResult<T>> AwaitTimedOutNativeOperationAsync<T>(
@@ -2111,8 +2603,9 @@ namespace WireSockUI.Forms
             BeginNativeCleanup();
             var markerLease = Global.NativeRecoveryMarkers.Write(context, result.Diagnostic);
             SetNativeRecoveryUi(profile);
-            MessageBox.Show(result.Diagnostic, Resources.TunnelErrorTitle, MessageBoxButtons.OK,
-                MessageBoxIcon.Warning);
+            if (!_shutdownComplete && !IsDisposed && !Disposing)
+                MessageBox.Show(result.Diagnostic, Resources.TunnelErrorTitle, MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
 
             NativeOperationResult<T> completedResult;
             try
@@ -2145,7 +2638,7 @@ namespace WireSockUI.Forms
             }
             finally
             {
-                EndNativeCleanup(profile);
+                await EndNativeCleanupAsync(profile);
             }
 
             return completedResult;
@@ -2359,7 +2852,7 @@ namespace WireSockUI.Forms
                 try
                 {
                     var connectGeneration = CurrentTunnelGeneration();
-                    _activeTunnelAddresses = profileSettings.Address;
+                    _activeTunnelAddresses = ProfileDisplayFormatter.FormatText(profileSettings.Address);
                     UpdateState(ConnectionState.Connecting, true, profile);
                     var connectTask = ConnectWithTimeoutAsync(profile, connectGeneration,
                         preservedNetworkLockPending);
@@ -2577,7 +3070,7 @@ namespace WireSockUI.Forms
 
         #region Layout
 
-        private void OnProfileChange(object sender, ListViewItemSelectionChangedEventArgs e)
+        private void ClearProfileDetails()
         {
             gbxInterface.Visible = false;
             gbxInterface.Text = string.Empty;
@@ -2591,6 +3084,11 @@ namespace WireSockUI.Forms
             gbxState.Visible = false;
             ClearDynamicLayout(layoutState);
             layoutState.RowStyles.Clear();
+        }
+
+        private void OnProfileChange(object sender, ListViewItemSelectionChangedEventArgs e)
+        {
+            ClearProfileDetails();
 
             if (e.IsSelected)
             {
@@ -2608,7 +3106,8 @@ namespace WireSockUI.Forms
                     AddRow(layoutInterface, "PrivateKey", Resources.InterfacePublicKey, profile.PublicKey);
                     AddRow(layoutInterface, "MTU", Resources.InterfaceMTU, profile.Mtu, true);
                     AddRow(layoutInterface, "ListenPort", Resources.InterfaceListenPort, profile.ListenPort, true);
-                    AddRow(layoutInterface, "Addresses", Resources.InterfaceAddresses, profile.Address);
+                    AddRow(layoutInterface, "Addresses", Resources.InterfaceAddresses,
+                        ProfileDisplayFormatter.FormatText(profile.Address));
 
                     layoutInterface.RowStyles.Add(new RowStyle(SizeType.Absolute, 10));
                     layoutInterface.RowStyles.Add(new RowStyle(SizeType.Absolute, 35));
@@ -2641,7 +3140,8 @@ namespace WireSockUI.Forms
                             : string.Empty, true);
                     AddRow(layoutPeer, "AllowedIPs", Resources.PeerAllowedIPs,
                         ProfileDisplayFormatter.FormatIpAddresses(profile.AllowedIPs));
-                    AddRow(layoutPeer, "Endpoint", Resources.PeerEndpoint, profile.Endpoint);
+                    AddRow(layoutPeer, "Endpoint", Resources.PeerEndpoint,
+                        ProfileDisplayFormatter.FormatText(profile.Endpoint));
                     AddRow(layoutPeer, "PersistentKeepAlive", Resources.PeerPersistentKeepAlive,
                         profile.PersistentKeepAlive, true);
 
@@ -2653,9 +3153,10 @@ namespace WireSockUI.Forms
                         ProfileDisplayFormatter.FormatApplications(profile.DisallowedApps), true);
                     AddRow(layoutPeer, "DisallowedIPs", Resources.PeerDisallowedIPs,
                         ProfileDisplayFormatter.FormatIpAddresses(profile.DisallowedIPs), true);
-                    AddRow(layoutPeer, "Socks5Proxy", Resources.PeerSocks5Proxy, profile.Socks5Proxy, true);
-                    AddRow(layoutPeer, "Socks5Username", Resources.PeerSocks5Username, profile.Socks5ProxyUsername,
-                        true);
+                    AddRow(layoutPeer, "Socks5Proxy", Resources.PeerSocks5Proxy,
+                        ProfileDisplayFormatter.FormatText(profile.Socks5Proxy), true);
+                    AddRow(layoutPeer, "Socks5Username", Resources.PeerSocks5Username,
+                        ProfileDisplayFormatter.FormatText(profile.Socks5ProxyUsername), true);
                     AddRow(layoutPeer, "Socks5Password", Resources.PeerSocks5Password,
                         !string.IsNullOrWhiteSpace(profile.Socks5ProxyPassword)
                             ? Resources.PeerSocks5PasswordValue

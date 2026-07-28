@@ -14,11 +14,15 @@ namespace WireSockUI.Forms
 {
     public partial class TaskManager : Form
     {
+        private const int FilterDebounceMilliseconds = 150;
         private readonly List<ListViewItem> _cachedProcessListItems = new List<ListViewItem>();
         private readonly ProcessSnapshotCache _processSnapshotCache = new ProcessSnapshotCache();
         private readonly string _currentUserSid;
+        private ListViewItem[] _cachedProcessListItemArray = Array.Empty<ListViewItem>();
+        private System.Windows.Forms.Timer _filterTimer;
         private CancellationTokenSource _refreshCancellation;
         private Image _refreshButtonImage;
+        private bool _managedResourcesDisposed;
 
         private sealed class ProcessDisplayEntry
         {
@@ -59,6 +63,11 @@ namespace WireSockUI.Forms
             if (txtSearch != null && Resources.ProcessesSearchCue != null)
                 txtSearch.SetCueBanner(Resources.ProcessesSearchCue);
 
+            _filterTimer = new System.Windows.Forms.Timer
+            {
+                Interval = FilterDebounceMilliseconds
+            };
+            _filterTimer.Tick += OnFilterTimerTick;
             Shown += OnTaskManagerShown;
         }
 
@@ -66,6 +75,7 @@ namespace WireSockUI.Forms
 
         private async void OnTaskManagerShown(object sender, EventArgs e)
         {
+            Shown -= OnTaskManagerShown;
             await RefreshProcessesAsync(true);
         }
 
@@ -102,6 +112,7 @@ namespace WireSockUI.Forms
                     return;
 
                 ApplyProcessRefreshResult(result);
+                _filterTimer?.Stop();
                 FilterProcesses(txtSearch.Text);
             }
             catch (OperationCanceledException)
@@ -179,6 +190,8 @@ namespace WireSockUI.Forms
                 { Tag = process.MatchName };
                 _cachedProcessListItems.Add(listViewItem);
             }
+
+            _cachedProcessListItemArray = _cachedProcessListItems.ToArray();
         }
 
         internal static string GetProcessMatchName(ProcessEntry process)
@@ -217,18 +230,25 @@ namespace WireSockUI.Forms
 
                 if (string.IsNullOrEmpty(filter))
                 {
-                    lstProcesses.Items.AddRange(_cachedProcessListItems.ToArray());
+                    lstProcesses.Items.AddRange(_cachedProcessListItemArray);
                 }
                 else
                 {
+                    ListViewItem firstMatch = null;
                     foreach (var item in _cachedProcessListItems)
                     {
                         if (item.Text.IndexOf(filter, StringComparison.OrdinalIgnoreCase) != -1)
                         {
                             var addedItem = lstProcesses.Items.Add(item);
-                            addedItem.Selected = true;
-                            addedItem.EnsureVisible();
+                            if (firstMatch == null)
+                                firstMatch = addedItem;
                         }
+                    }
+
+                    if (firstMatch != null)
+                    {
+                        firstMatch.Selected = true;
+                        firstMatch.EnsureVisible();
                     }
                 }
             }
@@ -245,6 +265,16 @@ namespace WireSockUI.Forms
 
         private void OnFindProcessChanged(object sender, EventArgs e)
         {
+            if (_filterTimer == null)
+                return;
+
+            _filterTimer.Stop();
+            _filterTimer.Start();
+        }
+
+        private void OnFilterTimerTick(object sender, EventArgs e)
+        {
+            _filterTimer.Stop();
             FilterProcesses(txtSearch.Text);
         }
 
@@ -274,14 +304,32 @@ namespace WireSockUI.Forms
             await RefreshProcessesAsync(false);
         }
 
-        protected override void OnFormClosed(FormClosedEventArgs e)
+        private void DisposeManagedResources()
         {
-            _refreshCancellation?.Cancel();
+            if (_managedResourcesDisposed)
+                return;
+
+            _managedResourcesDisposed = true;
+            Shown -= OnTaskManagerShown;
+            if (_filterTimer != null)
+            {
+                _filterTimer.Stop();
+                _filterTimer.Tick -= OnFilterTimerTick;
+                _filterTimer.Dispose();
+                _filterTimer = null;
+            }
+
+            try
+            {
+                _refreshCancellation?.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
             _refreshCancellation = null;
             btnRefresh.Image = null;
             _refreshButtonImage?.Dispose();
             _refreshButtonImage = null;
-            base.OnFormClosed(e);
         }
     }
 }

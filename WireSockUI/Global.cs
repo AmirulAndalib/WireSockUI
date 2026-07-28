@@ -55,12 +55,29 @@ namespace WireSockUI
 
         internal static void ValidateSpecialFolderRoots()
         {
+            ValidateSpecialFolderRoots(ApplicationDataRoot, CommonApplicationDataRoot);
+        }
+
+        internal static void ValidateSpecialFolderRoots(
+            string applicationDataRoot,
+            string commonApplicationDataRoot)
+        {
+            // ApplicationData is an untrusted, read-only legacy migration source and may
+            // legitimately be redirected to a network share by enterprise policy. It must
+            // still be absolute so a missing shell-folder value cannot redirect reads into
+            // the elevated process's working directory.
             RequireAbsoluteSpecialFolderRoot(
-                ApplicationDataRoot,
+                applicationDataRoot,
                 "the signed-in user's ApplicationData folder");
-            RequireAbsoluteSpecialFolderRoot(
-                CommonApplicationDataRoot,
+            var commonApplicationData = RequireAbsoluteSpecialFolderRoot(
+                commonApplicationDataRoot,
                 "the system CommonApplicationData folder");
+
+            if (!Program.TryValidateLocalFixedPath(
+                    commonApplicationData,
+                    "The system CommonApplicationData folder",
+                    out var commonApplicationDataDiagnostic))
+                throw new DirectoryNotFoundException(commonApplicationDataDiagnostic);
         }
 
         internal static string RequireAbsoluteSpecialFolderRoot(string path, string description)
@@ -100,7 +117,6 @@ namespace WireSockUI
 
         public static void EnsureApplicationFolders()
         {
-            Directory.CreateDirectory(MainFolder);
             EnsureConfigsFolder();
         }
 
@@ -200,6 +216,7 @@ namespace WireSockUI
         {
             try
             {
+                EnsureTrustedDirectoryCreationLocation(path, "secured WireSock UI directory");
                 var security = CreateAdministratorsOnlyDirectorySecurity();
                 if (!PathEntryExists(path))
                 {
@@ -259,6 +276,7 @@ namespace WireSockUI
         {
             try
             {
+                EnsureTrustedDirectoryCreationLocation(path, "WireSock UI notification directory");
                 var security = CreateUsersReadOnlyDirectorySecurity();
                 if (!PathEntryExists(path))
                 {
@@ -458,6 +476,18 @@ namespace WireSockUI
 
             throw new UnauthorizedAccessException(
                 $"Refusing to change security on pre-existing WireSock UI {(file ? "file" : "directory")} '{path}' because it is writable by or owned by non-administrative users.");
+        }
+
+        private static void EnsureTrustedDirectoryCreationLocation(string path, string description)
+        {
+            if (SecureFileSystem.AllowOwnerWriteFailureForTests)
+                return;
+
+            if (Program.TryValidateTrustedDirectoryCreationPath(path, description, out var diagnostic))
+                return;
+
+            throw new UnauthorizedAccessException(
+                $"Refusing to change security or create protected data at '{path}'. {diagnostic}");
         }
 
         private static bool PathEntryExists(string path)

@@ -78,7 +78,7 @@
         "resolved": "2.12.2",
         "contentHash": "glpAb3VrwfdAofp6PIyAzL0ZeTV7XUJ8muu0oZoTeyU5jtk2sMJ6QAMRRuFbovcaj+SBJiEUGklxIWOqQoxshA=="
       },
-      "wiresockui": {
+      "WireSockUI.Managed": {
         "type": "Project",
         "dependencies": {
           "System.Resources.Extensions": "[10.0.10, )",

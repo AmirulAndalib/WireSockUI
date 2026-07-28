@@ -13,9 +13,10 @@
         /// <param name="disposing">true if managed resources should be disposed; otherwise, false.</param>
         protected override void Dispose(bool disposing)
         {
-            if (disposing && (components != null))
+            if (disposing)
             {
-                components.Dispose();
+                DisposeManagedResources();
+                components?.Dispose();
             }
             base.Dispose(disposing);
         }
@@ -32,7 +33,7 @@
             this.chkAutoMinimize = new System.Windows.Forms.CheckBox();
             this.chkAutoConnect = new System.Windows.Forms.CheckBox();
             this.btnSave = new System.Windows.Forms.Button();
-            this.btnOpenFolder = new System.Windows.Forms.Button();
+            this.btnCopyProfilesFolderPath = new System.Windows.Forms.Button();
             this.ddlLogLevel = new System.Windows.Forms.ComboBox();
             this.lblLogLevel = new System.Windows.Forms.Label();
             this.chkUseAdapter = new System.Windows.Forms.CheckBox();
@@ -87,16 +88,16 @@
             this.btnSave.Text = "Save";
             this.btnSave.Click += new System.EventHandler(this.OnSaveClick);
             // 
-            // btnOpenFolder
+            // btnCopyProfilesFolderPath
             // 
-            this.btnOpenFolder.Location = new System.Drawing.Point(89, 254);
-            this.btnOpenFolder.Name = "btnOpenFolder";
-            this.resControls.SetResourceKey(this.btnOpenFolder, "SettingsProfiles");
-            this.btnOpenFolder.Size = new System.Drawing.Size(121, 25);
-            this.btnOpenFolder.TabIndex = 4;
-            this.btnOpenFolder.TabStop = false;
-            this.btnOpenFolder.Text = "Open profiles folder";
-            this.btnOpenFolder.Click += new System.EventHandler(this.OnProfilesFolderClick);
+            this.btnCopyProfilesFolderPath.Location = new System.Drawing.Point(89, 254);
+            this.btnCopyProfilesFolderPath.Name = "btnCopyProfilesFolderPath";
+            this.resControls.SetResourceKey(this.btnCopyProfilesFolderPath, "SettingsProfiles");
+            this.btnCopyProfilesFolderPath.Size = new System.Drawing.Size(142, 25);
+            this.btnCopyProfilesFolderPath.TabIndex = 4;
+            this.btnCopyProfilesFolderPath.TabStop = false;
+            this.btnCopyProfilesFolderPath.Text = "Copy profiles folder path";
+            this.btnCopyProfilesFolderPath.Click += new System.EventHandler(this.OnCopyProfilesFolderPathClick);
             // 
             // ddlLogLevel
             // 
@@ -182,7 +183,7 @@
             this.Controls.Add(this.lblLogLevel);
             this.Controls.Add(this.ddlLogLevel);
             this.Controls.Add(this.chkUseAdapter);
-            this.Controls.Add(this.btnOpenFolder);
+            this.Controls.Add(this.btnCopyProfilesFolderPath);
             this.Controls.Add(this.btnSave);
             this.Controls.Add(this.chkAutoConnect);
             this.Controls.Add(this.chkAutoMinimize);
@@ -206,7 +207,7 @@
         private System.Windows.Forms.CheckBox chkAutoMinimize;
         private System.Windows.Forms.CheckBox chkAutoConnect;
         private System.Windows.Forms.Button btnSave;
-        private System.Windows.Forms.Button btnOpenFolder;
+        private System.Windows.Forms.Button btnCopyProfilesFolderPath;
         private System.Windows.Forms.ComboBox ddlLogLevel;
         private System.Windows.Forms.Label lblLogLevel;
         private System.Windows.Forms.CheckBox chkUseAdapter;

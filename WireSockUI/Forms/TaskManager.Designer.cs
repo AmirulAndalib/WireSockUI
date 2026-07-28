@@ -13,9 +13,10 @@
         /// <param name="disposing">true if managed resources should be disposed; otherwise, false.</param>
         protected override void Dispose(bool disposing)
         {
-            if (disposing && (components != null))
+            if (disposing)
             {
-                components.Dispose();
+                DisposeManagedResources();
+                components?.Dispose();
             }
             base.Dispose(disposing);
         }
@@ -78,6 +79,7 @@
             // 
             this.txtSearch.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
             this.txtSearch.Location = new System.Drawing.Point(6, 279);
+            this.txtSearch.MaxLength = 260;
             this.txtSearch.Name = "txtSearch";
             this.resControls.SetResourceKey(this.txtSearch, null);
             this.txtSearch.Size = new System.Drawing.Size(308, 20);

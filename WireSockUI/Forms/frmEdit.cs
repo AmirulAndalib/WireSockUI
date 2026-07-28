@@ -35,6 +35,8 @@ namespace WireSockUI.Forms
         private Timer _highlightTimer;
         private readonly string _originalProfileName;
         private string _targetConfigurationKeyName;
+        private bool _managedResourcesDisposed;
+        private bool _hasSyntaxDiagnostics;
 
         public FrmEdit() : this(null)
         {
@@ -50,6 +52,7 @@ namespace WireSockUI.Forms
 
             ShowInTaskbar = false;
             txtProfileName.MaxLength = Profile.MaxProfileNameLength;
+            txtEditor.MaxLength = checked((int)Profile.MaxProfileSizeBytes);
             _originalProfileName = sourcePath == null ? config : null;
 
             if (string.IsNullOrEmpty(config))
@@ -110,6 +113,7 @@ namespace WireSockUI.Forms
             _highlighting = true;
 
             var hasErrors = false;
+            string currentSection = null;
 
             // Saving the original settings
             var originalIndex = txtEditor.SelectionStart;
@@ -158,16 +162,12 @@ namespace WireSockUI.Forms
                             txtEditor.SelectionColor = Color.DarkBlue;
                             txtEditor.SelectionFont = _editorBoldFont;
 
-                            switch (m.Groups["section"].Value)
+                            var sectionToken = m.Groups["section"].Value;
+                            currentSection = sectionToken.Substring(1, sectionToken.Length - 2).Trim();
+                            if (!Profile.IsCanonicalSectionName(currentSection))
                             {
-                                case "[Interface]":
-                                case "[Peer]":
-                                    break;
-                                // Unrecognized sections
-                                default:
-                                    txtEditor.UnderlineSelection();
-                                    hasErrors = true;
-                                    break;
+                                txtEditor.UnderlineSelection();
+                                hasErrors = true;
                             }
 
                             continue;
@@ -179,7 +179,19 @@ namespace WireSockUI.Forms
                             txtEditor.SelectionLength = m.Groups["key"].Length;
                             txtEditor.SelectionColor = Color.Navy;
 
-                            var key = m.Groups["key"].Value.ToLowerInvariant();
+                            var enteredKey = m.Groups["key"].Value;
+                            var supportedKey = Profile.TryGetCanonicalKey(
+                                currentSection,
+                                enteredKey,
+                                out var canonicalKey);
+                            if (!supportedKey ||
+                                !string.Equals(enteredKey, canonicalKey, StringComparison.Ordinal))
+                            {
+                                txtEditor.UnderlineSelection();
+                                hasErrors = true;
+                            }
+
+                            var key = (canonicalKey ?? enteredKey).ToLowerInvariant();
                             var value = string.Empty;
 
                             if (m.Groups["value"].Success)
@@ -191,7 +203,13 @@ namespace WireSockUI.Forms
                                 value = m.Groups["value"].Value;
                             }
 
-                            if (ConfigValueValidator.TryGetInterfaceExtensionRule(key, out var interfaceExtensionRule))
+                            if (!supportedKey)
+                                continue;
+
+                            if (string.Equals(currentSection, "Interface", StringComparison.Ordinal) &&
+                                ConfigValueValidator.TryGetInterfaceExtensionRule(
+                                    canonicalKey,
+                                    out var interfaceExtensionRule))
                             {
                                 if (!interfaceExtensionRule.IsValid(value))
                                 {
@@ -234,7 +252,12 @@ namespace WireSockUI.Forms
                                 case "publickey":
                                 case "presharedkey":
                                     {
-                                        if (!string.IsNullOrEmpty(value))
+                                        if (key == "publickey" && string.IsNullOrWhiteSpace(value))
+                                        {
+                                            txtEditor.UnderlineSelection();
+                                            hasErrors = true;
+                                        }
+                                        else if (!string.IsNullOrEmpty(value))
                                             try
                                             {
                                                 var binaryKey = Convert.FromBase64String(value);
@@ -254,6 +277,12 @@ namespace WireSockUI.Forms
                                 case "allowedips":
                                 case "disallowedips":
                                     {
+                                        if (key != "disallowedips" && string.IsNullOrWhiteSpace(value))
+                                        {
+                                            txtEditor.UnderlineSelection();
+                                            hasErrors = true;
+                                        }
+
                                         foreach (Match e in MultiValueMatch.Matches(value))
                                             if (!string.IsNullOrWhiteSpace(e.Value) &&
                                                 !IpHelper.IsValidSubnetOrSingleIpAddress(e.Value.Trim()))
@@ -378,7 +407,11 @@ namespace WireSockUI.Forms
                         }
                     }
 
-                    btnSave.Enabled = !hasErrors;
+                    // Highlighting is advisory. The authoritative bounded parser runs on save
+                    // and supplies the actionable diagnostic; never strand users behind a
+                    // heuristic false positive (for example, an overwritten earlier section).
+                    _hasSyntaxDiagnostics = hasErrors;
+                    btnSave.Enabled = true;
                 }
                 finally
                 {
@@ -565,7 +598,9 @@ namespace WireSockUI.Forms
                 _highlightTimer.Stop();
 
             ApplySyntaxHighlighting();
-            return btnSave.Enabled;
+            // Profile construction below is the authoritative SDK-compatible validation
+            // boundary and produces the error shown to the user.
+            return true;
         }
 
         private static void TryDeleteTemporaryProfile(string tmpProfile)
@@ -634,11 +669,16 @@ namespace WireSockUI.Forms
             }
         }
 
-        protected override void OnFormClosed(FormClosedEventArgs e)
+        private void DisposeManagedResources()
         {
+            if (_managedResourcesDisposed)
+                return;
+
+            _managedResourcesDisposed = true;
             if (_highlightTimer != null)
             {
                 _highlightTimer.Stop();
+                _highlightTimer.Tick -= OnHighlightTimerTick;
                 _highlightTimer.Dispose();
                 _highlightTimer = null;
             }
@@ -646,6 +686,9 @@ namespace WireSockUI.Forms
             _editorRegularFont?.Dispose();
             _editorItalicFont?.Dispose();
             _editorBoldFont?.Dispose();
+            _editorRegularFont = null;
+            _editorItalicFont = null;
+            _editorBoldFont = null;
 
             toolStripMenuItemByProcName.Image = null;
             toolStripMenuItemByDirPath.Image = null;
@@ -656,8 +699,6 @@ namespace WireSockUI.Forms
             _processMenuImage = null;
             _directoryMenuImage = null;
             _fileMenuImage = null;
-
-            base.OnFormClosed(e);
         }
 
         private static Bitmap GetWindowsIconBitmap(WindowsIcons.Icons icon, int size)

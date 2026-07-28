@@ -14,6 +14,7 @@ using System.Security.Principal;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows.Forms;
 using System.Xml;
 using System.Xml.Linq;
 using WireSockUI;
@@ -104,6 +105,9 @@ namespace WireSockUI.Tests
 
         private static int Main(string[] args)
         {
+            if (TryRunAutoRunServiceTestHelper(args, out var autoRunHelperExitCode))
+                return autoRunHelperExitCode;
+
             if (args?.Any(arg => string.Equals(arg, "--sdk-integration", StringComparison.OrdinalIgnoreCase)) == true)
                 return RunSdkIntegrationSmoke();
 
@@ -121,6 +125,7 @@ namespace WireSockUI.Tests
                 { "Profile enumeration rejects oversized folders", ProfileEnumerationRejectsOversizedFolders },
                 { "Profile catalog reports enumeration failures without replacing data", ProfileCatalogReportsEnumerationFailures },
                 { "Profile catalog rejects case-insensitive duplicates", ProfileCatalogRejectsCaseInsensitiveDuplicates },
+                { "Profile creation rejects case-insensitive collisions", ProfileCreationRejectsCaseInsensitiveCollisions },
                 { "Profile rejects oversized installed files", ProfileRejectsOversizedInstalledFiles },
                 { "Profile rejects directory profile paths", ProfileRejectsDirectoryProfilePaths },
                 { "Profile rejects reparse point profile files", ProfileRejectsReparsePointProfileFiles },
@@ -153,6 +158,7 @@ namespace WireSockUI.Tests
                 { "Time formatting uses localized day text", TimeFormattingUsesLocalizedDayText },
                 { "Global config folder containment handles drive roots", GlobalConfigFolderContainmentHandlesDriveRoots },
                 { "Global rejects unavailable or relative special folders", GlobalRejectsInvalidSpecialFolderRoots },
+                { "Global permits redirected legacy ApplicationData only", GlobalPermitsRedirectedLegacyApplicationDataOnly },
                 { "Global rejects unsecured config folder overrides by default", GlobalRejectsUnsecuredConfigFolderOverridesByDefault },
                 { "Global rejects untrusted pre-existing secure data without laundering ACLs", GlobalRejectsUntrustedPreexistingSecureData },
                 { "Global fails closed on configuration directory reparse points", GlobalFailsClosedOnConfigurationDirectoryReparsePoints },
@@ -166,15 +172,19 @@ namespace WireSockUI.Tests
                 { "Program enumerates nested application payloads", ProgramEnumeratesNestedApplicationPayloads },
                 { "Program bounds application payload enumeration", ProgramBoundsApplicationPayloadEnumeration },
                 { "Program distinguishes x64 and ARM64 PE images", ProgramDistinguishesBinaryArchitectures },
+                { "Program discovers WireSock libraries only from registered locations", ProgramDiscoversWireSockLibrariesOnlyFromRegisteredLocations },
                 { "Program rejects user-writable WireSock library directories", ProgramRejectsUserWritableWireSockLibraryDirectories },
                 { "Program detects user-writable WireSock library files", ProgramDetectsUserWritableWireSockLibraryFiles },
                 { "Program bounds WireSock SDK companion enumeration", ProgramBoundsWireSockSdkCompanionEnumeration },
                 { "Program reports attribute inspection failures", ProgramReportsAttributeInspectionFailures },
                 { "Program rejects an untrusted WireSock crash handler", ProgramRejectsUntrustedWireSockCrashHandler },
                 { "Program distinguishes read-only and writable ACLs", ProgramDistinguishesReadOnlyAndWritableAcls },
-                { "Program recognizes administrative owner SIDs", ProgramRecognizesAdministrativeOwnerSids },
+                { "Program restricts trusted owner SIDs", ProgramRestrictsTrustedOwnerSids },
+                { "Program checks elevation without token-access failures", ProgramChecksElevationWithoutTokenAccessFailures },
                 { "Program rejects over-the-shoulder elevation identities", ProgramRejectsOverTheShoulderElevationIdentities },
                 { "Program rejects replaceable trusted path ancestors", ProgramRejectsReplaceableTrustedPathAncestors },
+                { "Program rejects protected directory creation below writable parents", ProgramRejectsProtectedDirectoryCreationBelowWritableParents },
+                { "Program permits one protected leaf below a trusted shared root", ProgramPermitsSingleProtectedLeafBelowTrustedSharedRoot },
                 { "Autorun rejects untrusted executable paths", AutoRunRejectsUntrustedExecutablePaths },
                 { "Autorun rejects reparse point executable folders", AutoRunRejectsReparsePointExecutableFolders },
                 { "Profile import rejects oversized files", ProfileImportRejectsOversizedFiles },
@@ -204,10 +214,13 @@ namespace WireSockUI.Tests
                 { "Tunnel session coordinator enforces recovery invariants", TunnelSessionCoordinatorEnforcesRecoveryInvariants },
                 { "Tunnel session coordinator waits for pending operations", TunnelSessionCoordinatorWaitsForPendingOperations },
                 { "Tunnel monitor stops after a bounded query timeout", TunnelMonitorStopsAfterBoundedQueryTimeout },
+                { "Tunnel monitor bounds a busy connecting state", TunnelMonitorBoundsBusyConnectingState },
                 { "Tunnel monitor preserves statistics query timeouts", TunnelMonitorPreservesStatisticsQueryTimeouts },
                 { "Tunnel monitor suppresses canceled query updates", TunnelMonitorSuppressesCanceledQueryUpdates },
                 { "Tunnel monitor classifies unexpected statistics failures", TunnelMonitorClassifiesUnexpectedStatisticsFailures },
+                { "Tunnel monitor handler failures fail closed", TunnelMonitorHandlerFailuresFailClosed },
                 { "Tunnel monitor UI dispatch awaits marshaled updates", TunnelMonitorUiDispatchAwaitsMarshaledUpdates },
+                { "UI dispatch never runs inline on a worker without a handle", UiDispatchNeverRunsInlineOnWorkerWithoutHandle },
                 { "WireSock manager bounds native log backpressure", WireSockManagerBoundsNativeLogBackpressure },
                 { "WireSock manager bounds retained log records", WireSockManagerBoundsRetainedLogRecords },
                 { "UI log buffering coalesces and bounds dispatch", UiLogBufferingCoalescesAndBoundsDispatch },
@@ -216,6 +229,8 @@ namespace WireSockUI.Tests
                 { "Diagnostic logging bounds oversized records", DiagnosticLoggingBoundsOversizedRecords },
                 { "Native query distinguishes error sentinels", NativeQueryDistinguishesErrorSentinels },
                 { "Settings upgrade runs exactly once", SettingsUpgradeRunsExactlyOnce },
+                { "Legacy user settings migration parses only allowlisted bounded values", LegacyUserSettingsMigrationParsesAllowlistedValues },
+                { "Legacy user settings migration rejects unresolved local paths", LegacyUserSettingsMigrationRejectsUnresolvedLocalPaths },
                 { "Protected settings require consent and persist securely", ProtectedSettingsRequireConsentAndPersist },
                 { "Protected settings reject malformed or oversized data", ProtectedSettingsRejectMalformedOrOversizedData },
                 { "Protected settings recover interrupted saves", ProtectedSettingsRecoverInterruptedSaves },
@@ -226,14 +241,18 @@ namespace WireSockUI.Tests
                 { "Tunnel commands distinguish activation from deactivation", TunnelCommandsDistinguishActivationFromDeactivation },
                 { "Main window presentation renders recovery consistently", MainWindowPresentationRendersRecoveryConsistently },
                 { "Native timeout policy defers cleanup until completion", NativeTimeoutPolicyDefersCleanupUntilCompletion },
+                { "Shutdown settings wait is bounded", ShutdownSettingsWaitIsBounded },
                 { "Autorun preserves persisted state when status is unknown", AutorunPreservesPersistedStateWhenStatusIsUnknown },
                 { "Autorun classification covers legacy shortcuts and conflicts", AutorunClassificationCoversLegacyAndConflicts },
+                { "Autorun helper bounds hangs and recovers verified state", AutoRunHelperBoundsHangsAndRecoversVerifiedState },
                 { "Legacy Startup shortcuts are handled without shell parsing", LegacyStartupShortcutIsHandledWithoutShellParsing },
                 { "Legacy Startup shortcut metadata failures fail closed", LegacyStartupShortcutMetadataFailuresFailClosed },
                 { "Legacy Startup shortcut commit is consent and path bound", LegacyStartupShortcutCommitIsConsentAndPathBound },
                 { "Curve25519 matches RFC 7748 public-key vectors", Curve25519MatchesRfc7748PublicKeyVectors },
                 { "Curve25519 supports optional signing keys", Curve25519SupportsOptionalSigningKeys },
                 { "Editor validates Amnezia options", EditorValidatesAmneziaOptions },
+                { "WinForms dialogs initialize and dispose on an STA thread", WinFormsDialogsInitializeAndDisposeOnStaThread },
+                { "Settings copies the secured profiles path without shell activation", SettingsCopiesSecuredProfilesPathWithoutShellActivation },
                 { "Editor bounds synchronous syntax highlighting", EditorBoundsSynchronousSyntaxHighlighting },
                 { "Editor application-rule insertion is section aware", EditorApplicationRuleInsertionIsSectionAware },
                 { "Editor application-rule insertion rejects ambiguous values", EditorApplicationRuleInsertionRejectsAmbiguousValues },
@@ -247,6 +266,10 @@ namespace WireSockUI.Tests
                 { "Shell link HRESULT validation uses signed failure semantics", ShellLinkHresultValidationUsesSignedFailureSemantics },
                 { "Shell link PROPVARIANT interop is architecture safe and type checked", ShellLinkPropVariantInteropIsSafe },
                 { "Windows compatibility manifest enables modern behavior", WindowsCompatibilityManifestEnablesModernBehavior },
+                { "Elevation manifest establishes a native pre-CLR boundary", ElevationManifestEstablishesNativePreClrBoundary },
+                { "Browser activation permits only credential-free HTTPS", BrowserActivationPermitsOnlyCredentialFreeHttps },
+                { "Windows argument quoting preserves shell targets", WindowsArgumentQuotingPreservesShellTargets },
+                { "Program rejects non-local application paths", ProgramRejectsNonLocalApplicationPaths },
                 { "Autorun task name is path and user seeded", AutoRunTaskNameIsPathAndUserSeeded },
                 { "Autorun validates the complete task definition", AutoRunValidatesCompleteTaskDefinition },
                 { "Process picker preserves executable match names", ProcessPickerPreservesExecutableMatchNames },
@@ -260,8 +283,9 @@ namespace WireSockUI.Tests
                 { "Virtual adapter rename queue rejects out-of-order stale enqueues", VirtualAdapterRenameQueueRejectsOutOfOrderStaleEnqueues },
                 { "Virtual adapter rename provider stalls are capacity bounded", VirtualAdapterRenameProviderStallsAreCapacityBounded },
                 { "Lifecycle tracks late disconnect completion after timeout", LifecycleTracksLateDisconnectCompletionAfterTimeout },
+                { "Lifecycle shutdown queues cleanup behind in-flight native work", LifecycleShutdownQueuesCleanupBehindInFlightNativeWork },
                 { "Lifecycle awaits a late network-lock reset", LifecycleAwaitsLateNetworkLockReset },
-                { "Lifecycle shutdown resets an active lock after cleanup failure", LifecycleShutdownResetsActiveLockAfterCleanupFailure },
+                { "Lifecycle shutdown preserves an active lock when handle cleanup fails", LifecycleShutdownPreservesActiveLockWhenHandleCleanupFails },
                 { "Lifecycle shutdown resets a preserved lock after release retry", LifecycleShutdownResetsPreservedLockAfterReleaseRetry },
                 { "Lifecycle shutdown avoids synchronization-context deadlocks", LifecycleShutdownAvoidsSynchronizationContextDeadlocks },
                 { "WireSock manager surfaces native query failures", WireSockManagerSurfacesNativeQueryFailures },
@@ -352,7 +376,26 @@ namespace WireSockUI.Tests
             if (test == null) throw new ArgumentNullException(nameof(test));
             if (timeoutMilliseconds <= 0) throw new ArgumentOutOfRangeException(nameof(timeoutMilliseconds));
 
-            var task = Task.Run(test);
+            var completion = new TaskCompletionSource<bool>();
+            var testThread = new Thread(() =>
+            {
+                try
+                {
+                    test();
+                    completion.TrySetResult(true);
+                }
+                catch (Exception ex)
+                {
+                    completion.TrySetException(ex);
+                }
+            })
+            {
+                IsBackground = true,
+                Name = "WireSockUI test"
+            };
+            testThread.SetApartmentState(ApartmentState.STA);
+            testThread.Start();
+            var task = completion.Task;
             try
             {
                 if (task.Wait(timeoutMilliseconds))
@@ -392,6 +435,43 @@ namespace WireSockUI.Tests
             }
 
             return null;
+        }
+
+        private static bool TryRunAutoRunServiceTestHelper(string[] args, out int exitCode)
+        {
+            exitCode = 0;
+            if (args == null ||
+                args.Length != 2 ||
+                !string.Equals(
+                    args[0],
+                    AutoRunOperationService.HelperSwitch,
+                    StringComparison.Ordinal))
+                return false;
+
+            var behavior = Environment.GetEnvironmentVariable(
+                "WIRESOCKUI_TEST_AUTORUN_HELPER_BEHAVIOR");
+            switch (behavior)
+            {
+                case "success":
+                    Console.Out.Write("test-helper-" + args[1]);
+                    return true;
+                case "failure":
+                    Console.Error.Write("simulated autorun helper failure");
+                    exitCode = 10;
+                    return true;
+                case "hang":
+                    Console.Out.Write("test-helper-started");
+                    Console.Out.Flush();
+                    Thread.Sleep(TimeSpan.FromSeconds(30));
+                    return true;
+                case "oversize":
+                    Console.Out.Write(new string('x', 256 * 1024));
+                    return true;
+                default:
+                    Console.Error.Write("The autorun service test helper behavior was not configured.");
+                    exitCode = 64;
+                    return true;
+            }
         }
 
         private static int RunSdkIntegrationSmoke()
@@ -894,6 +974,33 @@ namespace WireSockUI.Tests
                 "Expected a clear data-integrity error for case-insensitive duplicate profile names.");
             AssertTrue(result.Exception.Message.Contains("Office") && result.Exception.Message.Contains("office"),
                 "Expected the duplicate-profile diagnostic to identify both files.");
+        }
+
+        private static void ProfileCreationRejectsCaseInsensitiveCollisions()
+        {
+            var directory = Path.Combine(
+                Path.GetTempPath(), "WireSockUI.Tests", Guid.NewGuid().ToString("N"));
+            var existingPath = Path.Combine(directory, "Office.conf");
+            var destinationPath = Path.Combine(directory, "office.conf");
+            var temporaryPath = Path.Combine(directory, "new-profile.tmp");
+
+            try
+            {
+                Directory.CreateDirectory(directory);
+                File.WriteAllText(existingPath, "existing");
+                File.WriteAllText(temporaryPath, "replacement");
+
+                AssertThrows<IOException>(
+                    () => ProfileFileTransaction.Commit(temporaryPath, destinationPath),
+                    "conflicts with existing entry");
+                AssertEqual("existing", File.ReadAllText(existingPath));
+                AssertEqual("replacement", File.ReadAllText(temporaryPath));
+                AssertEqual(1, Directory.GetFiles(directory, "*.conf").Length);
+            }
+            finally
+            {
+                TryDeleteDirectory(directory, true);
+            }
         }
 
         private static void ProfileRejectsOversizedInstalledFiles()
@@ -1714,6 +1821,27 @@ namespace WireSockUI.Tests
                 Global.RequireAbsoluteSpecialFolderRoot(absolute, "test application data"));
         }
 
+        private static void GlobalPermitsRedirectedLegacyApplicationDataOnly()
+        {
+            var commonApplicationData =
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+
+            Global.ValidateSpecialFolderRoots(
+                @"\\server.example\redirected$\user\AppData\Roaming",
+                commonApplicationData);
+
+            AssertThrows<DirectoryNotFoundException>(
+                () => Global.ValidateSpecialFolderRoots(
+                    @"\\server.example\redirected$\user\AppData\Roaming",
+                    @"\\server.example\shared$\ProgramData"),
+                "local");
+            AssertThrows<DirectoryNotFoundException>(
+                () => Global.ValidateSpecialFolderRoots(
+                    "relative-user-data",
+                    commonApplicationData),
+                "absolute path");
+        }
+
         private static void GlobalRejectsUnsecuredConfigFolderOverridesByDefault()
         {
             var originalConfigsFolder = Global.ConfigsFolder;
@@ -1736,6 +1864,10 @@ namespace WireSockUI.Tests
 
         private static void ReleaseVersionParserHandlesSemVerTags()
         {
+            AssertTrue(ReleaseVersionParser.TryParseReleaseTag("release-v1.2.3", out var canonicalRelease),
+                "Expected canonical release-v tags to parse.");
+            AssertEqual("1.2.3", canonicalRelease.ToString());
+
             AssertTrue(ReleaseVersionParser.TryParseReleaseTag("V1.2.3", out var upperV),
                 "Expected uppercase V-prefixed tags to parse.");
             AssertEqual("1.2.3", upperV.ToString());
@@ -1902,6 +2034,30 @@ namespace WireSockUI.Tests
             File.WriteAllBytes(path, image);
         }
 
+        private static void ProgramDiscoversWireSockLibrariesOnlyFromRegisteredLocations()
+        {
+            const string registeredInstallLocation = @"C:\Program Files\WireSock SDK";
+            var candidates = WireSockUI.Program
+                .EnumerateWireSockLibraryDirectoryCandidates(
+                    new[] { registeredInstallLocation })
+                .ToArray();
+
+            AssertEqual(3, candidates.Length);
+            AssertEqual(
+                Path.Combine(registeredInstallLocation, "sdk"),
+                candidates[0]);
+            AssertEqual(
+                Path.Combine(registeredInstallLocation, "bin"),
+                candidates[1]);
+            AssertEqual(registeredInstallLocation, candidates[2]);
+            AssertFalse(
+                candidates.Any(candidate => string.Equals(
+                    candidate,
+                    AppDomain.CurrentDomain.BaseDirectory,
+                    StringComparison.OrdinalIgnoreCase)),
+                "Expected application-adjacent wgbooster.dll discovery to remain disabled.");
+        }
+
         private static void ProgramRejectsUserWritableWireSockLibraryDirectories()
         {
             var directory = Path.Combine(Path.GetTempPath(), "WireSockUI.Tests", Guid.NewGuid().ToString("N"));
@@ -1980,7 +2136,7 @@ namespace WireSockUI.Tests
             }
         }
 
-        private static void ProgramRecognizesAdministrativeOwnerSids()
+        private static void ProgramRestrictsTrustedOwnerSids()
         {
             var hasTrustedOwner = typeof(WireSockUI.Program).GetMethod("HasTrustedOwner",
                 BindingFlags.NonPublic | BindingFlags.Static);
@@ -2003,16 +2159,20 @@ namespace WireSockUI.Tests
 
             var security = new DirectorySecurity();
             security.SetOwner(administratorSid);
-            AssertTrue((bool)hasTrustedOwner.Invoke(null, new object[] { security }),
-                "Expected the built-in account-domain Administrator owner to be trusted.");
+            AssertFalse((bool)hasTrustedOwner.Invoke(null, new object[] { security }),
+                "Expected an unrelated RID-500 account owner not to be trusted by suffix alone.");
 
             security.SetOwner(domainAdminsSid);
-            AssertTrue((bool)hasTrustedOwner.Invoke(null, new object[] { security }),
-                "Expected the account-domain Domain Admins owner to be trusted.");
+            AssertFalse((bool)hasTrustedOwner.Invoke(null, new object[] { security }),
+                "Expected an unrelated RID-512 group owner not to be trusted by suffix alone.");
 
             security.SetOwner(ordinaryUserSid);
             AssertFalse((bool)hasTrustedOwner.Invoke(null, new object[] { security }),
                 "Expected an ordinary account-domain owner to remain untrusted.");
+
+            security.SetOwner(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null));
+            AssertTrue((bool)hasTrustedOwner.Invoke(null, new object[] { security }),
+                "Expected the built-in Administrators group owner to remain trusted.");
 
             AssertFalse((bool)isTrustedAdministrativeSid.Invoke(null, new object[]
                 { new SecurityIdentifier(WellKnownSidType.LocalServiceSid, null) }),
@@ -2025,6 +2185,19 @@ namespace WireSockUI.Tests
                     new SecurityIdentifier(
                         "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464")
                 }), "Expected the exact TrustedInstaller SID to remain trusted.");
+#if DEBUG
+            if (WireSockUI.Program.IsProcessElevated(out _))
+            {
+                using (var identity = WindowsIdentity.GetCurrent(TokenAccessLevels.Query))
+                {
+                    AssertTrue(
+                        (bool)isTrustedAdministrativeSid.Invoke(
+                            null,
+                            new object[] { identity.User }),
+                        "Expected a Debug build to inspect the elevated current user without a token-access failure.");
+                }
+            }
+#endif
         }
 
         private static void ProgramRejectsOverTheShoulderElevationIdentities()
@@ -2052,6 +2225,24 @@ namespace WireSockUI.Tests
             AssertTrue(
                 mismatchDiagnostic?.IndexOf("different account", StringComparison.OrdinalIgnoreCase) >= 0,
                 "Expected an actionable over-the-shoulder elevation diagnostic.");
+        }
+
+        private static void ProgramChecksElevationWithoutTokenAccessFailures()
+        {
+            var elevated = WireSockUI.Program.IsProcessElevated(out var diagnostic);
+            if (elevated)
+            {
+                AssertTrue(
+                    string.IsNullOrEmpty(diagnostic),
+                    "Expected an elevated token to have no diagnostic.");
+                return;
+            }
+
+            AssertTrue(
+                diagnostic?.IndexOf(
+                    "not running with an elevated administrator token",
+                    StringComparison.OrdinalIgnoreCase) >= 0,
+                $"Expected a normal non-elevated result, not a token-access failure: {diagnostic}");
         }
 
         private static void GlobalFailsClosedOnConfigurationDirectoryReparsePoints()
@@ -2227,6 +2418,66 @@ namespace WireSockUI.Tests
             {
                 TryDeleteDirectory(directory, true);
             }
+        }
+
+        private static void ProgramRejectsProtectedDirectoryCreationBelowWritableParents()
+        {
+            var directory = Path.Combine(
+                Path.GetTempPath(),
+                "WireSockUI.Tests",
+                Guid.NewGuid().ToString("N"));
+            var protectedChild = Path.Combine(directory, "protected", "data");
+            Directory.CreateDirectory(directory);
+
+            try
+            {
+                AssertFalse(
+                    WireSockUI.Program.TryValidateTrustedDirectoryCreationPath(
+                        protectedChild,
+                        "Test protected directory",
+                        out var diagnostic),
+                    "Expected protected directory creation below a user-writable parent to fail closed.");
+                AssertTrue(
+                    !string.IsNullOrWhiteSpace(diagnostic) &&
+                    diagnostic.IndexOf("non-administrative", StringComparison.OrdinalIgnoreCase) >= 0,
+                    $"Expected an actionable protected-directory diagnostic, got '{diagnostic}'.");
+            }
+            finally
+            {
+                TryDeleteDirectory(directory, true);
+            }
+        }
+
+        private static void ProgramPermitsSingleProtectedLeafBelowTrustedSharedRoot()
+        {
+            var commonApplicationData =
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+            if (string.IsNullOrWhiteSpace(commonApplicationData))
+                throw new DirectoryNotFoundException("The shared application-data directory is unavailable.");
+
+            var missingLeaf = Path.Combine(
+                commonApplicationData,
+                "WireSockUI.Tests-" + Guid.NewGuid().ToString("N"));
+            AssertFalse(Directory.Exists(missingLeaf),
+                "Expected the protected-directory test leaf not to exist.");
+            AssertTrue(
+                WireSockUI.Program.TryValidateTrustedDirectoryCreationPath(
+                    missingLeaf,
+                    "Test protected directory",
+                    out var leafDiagnostic),
+                $"Expected one missing protected leaf below the trusted shared root to be allowed, got '{leafDiagnostic}'.");
+
+            var nestedMissingLeaf = Path.Combine(missingLeaf, "nested");
+            AssertFalse(
+                WireSockUI.Program.TryValidateTrustedDirectoryCreationPath(
+                    nestedMissingLeaf,
+                    "Test nested protected directory",
+                    out var nestedDiagnostic),
+                "Expected protected-directory validation to reject multiple missing path components.");
+            AssertTrue(
+                !string.IsNullOrWhiteSpace(nestedDiagnostic) &&
+                nestedDiagnostic.IndexOf("Only one protected leaf", StringComparison.OrdinalIgnoreCase) >= 0,
+                $"Expected an actionable nested-creation diagnostic, got '{nestedDiagnostic}'.");
         }
 
         private static void AutoRunRejectsUntrustedExecutablePaths()
@@ -2737,8 +2988,13 @@ namespace WireSockUI.Tests
                 try
                 {
                     SecureFileSystem.AllowOwnerWriteFailureForTests = true;
+                    var orphanTemporaryPath =
+                        Global.NativeRecoveryMarkerPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                    File.WriteAllText(orphanTemporaryPath, "orphaned marker write");
                     var firstLease = Global.NativeRecoveryMarkers.Write("preserved operation", "preserved diagnostic");
                     AssertTrue(firstLease != null, "Expected the initial recovery marker write to succeed.");
+                    AssertFalse(File.Exists(orphanTemporaryPath),
+                        "Expected recovery marker writes to clean an orphaned managed temporary file.");
                     var previousContents = File.ReadAllText(Global.NativeRecoveryMarkerPath);
 
                     using (new FileStream(Global.NativeRecoveryMarkerPath, FileMode.Open, FileAccess.Read,
@@ -2929,6 +3185,168 @@ namespace WireSockUI.Tests
                 () => throw new InvalidOperationException("Upgrade should not run."),
                 () => throw new InvalidOperationException("Completion should not run."),
                 () => throw new InvalidOperationException("Save should not run."));
+
+            WireSockUI.Program.RunSettingsUpgrade(
+                true,
+                () =>
+                {
+                    calls.Add("retry");
+                    return false;
+                },
+                () => throw new InvalidOperationException("A failed migration must remain pending."),
+                () => throw new InvalidOperationException("A failed migration must not be saved."));
+            AssertEqual("upgrade,complete,save,retry", string.Join(",", calls));
+        }
+
+        private static void LegacyUserSettingsMigrationParsesAllowlistedValues()
+        {
+            const string xml =
+                "<configuration><userSettings><WireSockUI.Properties.Settings>" +
+                "<setting name=\"AutoConnect\"><value>true</value></setting>" +
+                "<setting name=\"AutoMinimize\"><value>true</value></setting>" +
+                "<setting name=\"AutoUpdate\"><value>false</value></setting>" +
+                "<setting name=\"EnableNotifications\"><value>false</value></setting>" +
+                "<setting name=\"EnableKillSwitch\"><value>true</value></setting>" +
+                "<setting name=\"UseAdapter\"><value>true</value></setting>" +
+                "<setting name=\"LastProfile\"><value>office</value></setting>" +
+                "<setting name=\"LogLevel\"><value>Debug</value></setting>" +
+                "<setting name=\"AutoRun\"><value>true</value></setting>" +
+                "<setting name=\"Unknown\"><value>ignored</value></setting>" +
+                "</WireSockUI.Properties.Settings></userSettings>" +
+                "<spoof><setting name=\"LogLevel\"><value>All</value></setting></spoof>" +
+                "</configuration>";
+
+            using (var stream = new MemoryStream(Encoding.UTF8.GetBytes(xml)))
+            {
+                AssertTrue(
+                    LegacyUserSettingsMigrationService.TryParse(stream, out var snapshot),
+                    "Expected the bounded legacy settings document to be recognized.");
+                AssertTrue(snapshot.AutoConnect == true, "Expected AutoConnect to migrate.");
+                AssertTrue(snapshot.AutoMinimize == true, "Expected AutoMinimize to migrate.");
+                AssertTrue(snapshot.AutoUpdate == false, "Expected AutoUpdate to migrate.");
+                AssertTrue(snapshot.EnableNotifications == false,
+                    "Expected EnableNotifications to migrate.");
+                AssertTrue(snapshot.EnableKillSwitch == true,
+                    "Expected EnableKillSwitch to migrate for later privileged confirmation.");
+                AssertTrue(snapshot.UseAdapter == true,
+                    "Expected UseAdapter to migrate for later privileged confirmation.");
+                AssertEqual("office", snapshot.LastProfile);
+                AssertEqual("Debug", snapshot.LogLevel);
+            }
+
+            const string entityDocument =
+                "<!DOCTYPE x [<!ENTITY secret SYSTEM \"file:///c:/windows/win.ini\">]>" +
+                "<configuration><userSettings><WireSockUI.Properties.Settings>" +
+                "<setting name=\"LogLevel\"><value>&secret;</value></setting>" +
+                "</WireSockUI.Properties.Settings></userSettings></configuration>";
+            using (var stream = new MemoryStream(Encoding.UTF8.GetBytes(entityDocument)))
+                AssertThrows<XmlException>(
+                    () => LegacyUserSettingsMigrationService.TryParse(stream, out _),
+                    "DTD");
+
+            AssertTrue(
+                LegacyUserSettingsMigrationService.IsKnownLegacyIdentityDirectory(
+                    "WireSockUI.exe_Url_a1b2c3"),
+                "Expected the legacy URL-evidence settings identity.");
+            AssertTrue(
+                LegacyUserSettingsMigrationService.IsKnownLegacyIdentityDirectory(
+                    "WireSockUI.exe_StrongName_a1b2c3"),
+                "Expected the legacy strong-name settings identity.");
+            AssertFalse(
+                LegacyUserSettingsMigrationService.IsKnownLegacyIdentityDirectory(
+                    "Unrelated.exe_Url_a1b2c3"),
+                "Expected unrelated LocalFileSettingsProvider identities to be ignored.");
+            AssertTrue(
+                LegacyUserSettingsMigrationService.IsEligibleLegacyVersion(
+                    new Version(1, 2, 2, 0),
+                    new Version(1, 2, 3, 0)),
+                "Expected a previous-version settings directory to be eligible.");
+            AssertTrue(
+                LegacyUserSettingsMigrationService.IsEligibleLegacyVersion(
+                    new Version(1, 2, 3, 0),
+                    new Version(1, 2, 3, 0)),
+                "Expected a same-version settings directory under a different application identity to migrate.");
+            AssertFalse(
+                LegacyUserSettingsMigrationService.IsEligibleLegacyVersion(
+                    new Version(1, 2, 4, 0),
+                    new Version(1, 2, 3, 0)),
+                "Expected a future-version settings directory to be rejected.");
+
+            var directory = Path.Combine(
+                Path.GetTempPath(), "WireSockUI.LegacySettings.Tests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            try
+            {
+                var source = Path.Combine(directory, "user.config");
+                File.WriteAllText(source, xml, new UTF8Encoding(false, true));
+                AssertTrue(
+                    LegacyUserSettingsMigrationService.TryReadConfiguration(
+                        source, out var fileSnapshot),
+                    "Expected the validated-handle settings reader to parse a regular file.");
+                AssertEqual("Debug", fileSnapshot.LogLevel);
+
+                var oversized = Path.Combine(directory, "oversized.config");
+                File.WriteAllBytes(
+                    oversized,
+                    new byte[LegacyUserSettingsMigrationService.MaximumSettingsFileBytes + 1]);
+                AssertThrows<InvalidDataException>(
+                    () => LegacyUserSettingsMigrationService.TryReadConfiguration(
+                        oversized, out _),
+                    "maximum supported size");
+
+                var hardLink = Path.Combine(directory, "hard-link.config");
+                if (CreateHardLink(hardLink, source, IntPtr.Zero))
+                {
+                    AssertThrows<IOException>(
+                        () => LegacyUserSettingsMigrationService.TryReadConfiguration(
+                            hardLink, out _),
+                        "hard-linked");
+                }
+
+                var symbolicLink = Path.Combine(directory, "symbolic-link.config");
+                if (TryCreateFileSymbolicLink(symbolicLink, source))
+                {
+                    AssertThrows<IOException>(
+                        () => LegacyUserSettingsMigrationService.TryReadConfiguration(
+                            symbolicLink, out _),
+                        "reparse point");
+                }
+            }
+            finally
+            {
+                try
+                {
+                    if (Directory.Exists(directory))
+                        Directory.Delete(directory, true);
+                }
+                catch
+                {
+                    // Best-effort test cleanup must not hide the original result.
+                }
+            }
+        }
+
+        private static void LegacyUserSettingsMigrationRejectsUnresolvedLocalPaths()
+        {
+            AssertThrows<DirectoryNotFoundException>(
+                () => LegacyUserSettingsMigrationService.IsLocalFixedPath(string.Empty),
+                "must be absolute");
+            AssertThrows<DirectoryNotFoundException>(
+                () => LegacyUserSettingsMigrationService.IsLocalFixedPath("relative-local-data"),
+                "must be absolute");
+
+            AssertFalse(
+                LegacyUserSettingsMigrationService.ApplyLatest(
+                    WireSockUI.Properties.Settings.Default,
+                    null,
+                    string.Empty),
+                "Expected an unresolved LocalApplicationData path to preserve the migration retry flag.");
+            AssertFalse(
+                LegacyUserSettingsMigrationService.ApplyLatest(
+                    WireSockUI.Properties.Settings.Default,
+                    null,
+                    "relative-local-data"),
+                "Expected a relative LocalApplicationData path to preserve the migration retry flag.");
         }
 
         private static void ProtectedSettingsRequireConsentAndPersist()
@@ -3040,6 +3458,19 @@ namespace WireSockUI.Tests
                 WithTemporarySecureMainFolder(() =>
                 {
                     var backupPath = Path.Combine(Global.SecureMainFolder, "PrivilegedSettings.xml.backup");
+                    var orphanTemporaryPath = Path.Combine(
+                        Global.SecureMainFolder,
+                        $".PrivilegedSettings.xml.{Guid.NewGuid():N}.tmp");
+                    var orphanInvalidPath = Path.Combine(
+                        Global.SecureMainFolder,
+                        $".PrivilegedSettings.xml.{Guid.NewGuid():N}.invalid");
+                    var unmanagedLookalikePath = Path.Combine(
+                        Global.SecureMainFolder,
+                        ".PrivilegedSettings.xml.not-a-guid.tmp");
+                    File.WriteAllText(orphanTemporaryPath, "orphaned temporary settings");
+                    File.WriteAllText(orphanInvalidPath, "orphaned invalid settings");
+                    File.WriteAllText(unmanagedLookalikePath, "unmanaged lookalike");
+
                     var backupOnly = new PrivilegedSettingsSnapshot(true, "restored", false, true);
                     File.WriteAllText(backupPath, PrivilegedSettingsStore.Serialize(backupOnly),
                         new UTF8Encoding(false, true));
@@ -3053,6 +3484,12 @@ namespace WireSockUI.Tests
                         "Expected a backup-only interrupted save to restore the settings file.");
                     AssertFalse(File.Exists(backupPath),
                         "Expected the restored backup to be consumed.");
+                    AssertFalse(File.Exists(orphanTemporaryPath),
+                        "Expected interrupted-save recovery to remove an orphaned managed temporary file.");
+                    AssertFalse(File.Exists(orphanInvalidPath),
+                        "Expected interrupted-save recovery to remove an orphaned managed invalid file.");
+                    AssertTrue(File.Exists(unmanagedLookalikePath),
+                        "Expected interrupted-save recovery not to remove an unrecognized lookalike file.");
 
                     var committed = new PrivilegedSettingsSnapshot(false, "committed", true, false);
                     File.WriteAllText(PrivilegedSettingsStore.SettingsFilePath,
@@ -3375,6 +3812,153 @@ namespace WireSockUI.Tests
                 "Expected a known enabled state to use the requested value.");
         }
 
+        private static void AutoRunHelperBoundsHangsAndRecoversVerifiedState()
+        {
+            const string behaviorVariable =
+                "WIRESOCKUI_TEST_AUTORUN_HELPER_BEHAVIOR";
+            var previousBehavior = Environment.GetEnvironmentVariable(behaviorVariable);
+            var helperPath = Assembly.GetExecutingAssembly().Location;
+            var service = new AutoRunOperationService(() => helperPath);
+
+            try
+            {
+                Environment.SetEnvironmentVariable(behaviorVariable, "success");
+                var success = service.ExecuteAsync(
+                        AutoRunHelperOperation.Inspect,
+                        TimeSpan.FromSeconds(5),
+                        false,
+                        CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+                AssertEqual(
+                    (int)AutoRunOperationOutcome.Succeeded,
+                    (int)success.Outcome);
+                AssertEqual("test-helper-inspect", success.Payload);
+
+                Environment.SetEnvironmentVariable(behaviorVariable, "failure");
+                var failure = service.ExecuteAsync(
+                        AutoRunHelperOperation.Inspect,
+                        TimeSpan.FromSeconds(5),
+                        false,
+                        CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+                AssertEqual(
+                    (int)AutoRunOperationOutcome.Failed,
+                    (int)failure.Outcome);
+                AssertTrue(
+                    failure.Diagnostic?.Contains("simulated autorun helper failure") == true,
+                    "Expected the bounded helper diagnostic to be preserved.");
+
+                Environment.SetEnvironmentVariable(behaviorVariable, "oversize");
+                var oversizedOutput = service.ExecuteAsync(
+                        AutoRunHelperOperation.Inspect,
+                        TimeSpan.FromSeconds(5),
+                        false,
+                        CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+                AssertEqual(
+                    (int)AutoRunOperationOutcome.Succeeded,
+                    (int)oversizedOutput.Outcome);
+                AssertEqual(128 * 1024, oversizedOutput.Payload.Length);
+                AssertTrue(
+                    oversizedOutput.Payload.EndsWith("...", StringComparison.Ordinal),
+                    "Expected oversized helper output to retain an explicit truncation marker.");
+
+                Environment.SetEnvironmentVariable(behaviorVariable, "failure");
+                var failedMutation = service.ExecuteAsync(
+                        AutoRunHelperOperation.Enable,
+                        TimeSpan.FromSeconds(5),
+                        true,
+                        CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+                AssertEqual(
+                    (int)AutoRunOperationOutcome.StateUncertain,
+                    (int)failedMutation.Outcome);
+                AssertTrue(
+                    failedMutation.OperationStarted,
+                    "Expected a failed helper mutation to require state verification.");
+
+                Environment.SetEnvironmentVariable(behaviorVariable, "success");
+                var blockedAfterFailure = service.ExecuteAsync(
+                        AutoRunHelperOperation.Disable,
+                        TimeSpan.FromSeconds(5),
+                        true,
+                        CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+                AssertEqual(
+                    (int)AutoRunOperationOutcome.StateUncertain,
+                    (int)blockedAfterFailure.Outcome);
+                AssertFalse(
+                    blockedAfterFailure.OperationStarted,
+                    "Expected a mutation after a failed helper to be blocked before process start.");
+                service.AcknowledgeVerifiedMutationState();
+
+                Environment.SetEnvironmentVariable(behaviorVariable, "hang");
+                var uncertain = service.ExecuteAsync(
+                        AutoRunHelperOperation.Enable,
+                        TimeSpan.FromMilliseconds(100),
+                        true,
+                        CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+                AssertEqual(
+                    (int)AutoRunOperationOutcome.StateUncertain,
+                    (int)uncertain.Outcome);
+                AssertTrue(
+                    uncertain.OperationStarted,
+                    "Expected a timed-out mutation to be treated as having possibly started.");
+
+                Environment.SetEnvironmentVariable(behaviorVariable, "success");
+                var blockedMutation = service.ExecuteAsync(
+                        AutoRunHelperOperation.Disable,
+                        TimeSpan.FromSeconds(5),
+                        true,
+                        CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+                AssertEqual(
+                    (int)AutoRunOperationOutcome.StateUncertain,
+                    (int)blockedMutation.Outcome);
+                AssertFalse(
+                    blockedMutation.OperationStarted,
+                    "Expected an unverified follow-up mutation to be rejected before process start.");
+
+                var verification = service.ExecuteAsync(
+                        AutoRunHelperOperation.Inspect,
+                        TimeSpan.FromSeconds(5),
+                        false,
+                        CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+                AssertEqual(
+                    (int)AutoRunOperationOutcome.Succeeded,
+                    (int)verification.Outcome);
+
+                service.AcknowledgeVerifiedMutationState();
+                var retry = service.ExecuteAsync(
+                        AutoRunHelperOperation.Disable,
+                        TimeSpan.FromSeconds(5),
+                        true,
+                        CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+                AssertEqual(
+                    (int)AutoRunOperationOutcome.Succeeded,
+                    (int)retry.Outcome);
+                AssertEqual("test-helper-disable", retry.Payload);
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(
+                    behaviorVariable,
+                    previousBehavior);
+            }
+        }
+
         private static void Curve25519MatchesRfc7748PublicKeyVectors()
         {
             var privateKey = ParseHex(
@@ -3448,6 +4032,137 @@ namespace WireSockUI.Tests
                 "Expected empty SIP hostname labels to be rejected.");
         }
 
+        private static void ShutdownSettingsWaitIsBounded()
+        {
+            var neverCompletes = new TaskCompletionSource<object>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var stopwatch = Stopwatch.StartNew();
+            var completed = BoundedTaskWaiter.WaitAsync(neverCompletes.Task, 50)
+                .GetAwaiter().GetResult();
+            stopwatch.Stop();
+
+            AssertFalse(completed,
+                "Expected shutdown to continue when a settings operation never completes.");
+            AssertTrue(stopwatch.Elapsed < TimeSpan.FromSeconds(2),
+                "Expected the settings shutdown deadline to remain bounded.");
+            AssertTrue(BoundedTaskWaiter.WaitAsync(Task.CompletedTask, 50)
+                    .GetAwaiter().GetResult(),
+                "Expected an already-completed settings operation to be observed.");
+            AssertThrows<InvalidOperationException>(
+                () => BoundedTaskWaiter.WaitAsync(
+                        Task.FromException(new InvalidOperationException("settings failed")),
+                        50)
+                    .GetAwaiter().GetResult(),
+                "settings failed");
+        }
+
+        private static void WinFormsDialogsInitializeAndDisposeOnStaThread()
+        {
+            AssertEqual(
+                ApartmentState.STA.ToString(),
+                Thread.CurrentThread.GetApartmentState().ToString());
+
+            var instanceFlags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var getControlState = typeof(Control).GetMethod(
+                "GetState",
+                instanceFlags,
+                null,
+                new[] { typeof(int) },
+                null);
+            if (getControlState == null)
+                throw new InvalidOperationException("WinForms Control.GetState was not found.");
+
+            using (var settings = new FrmSettings())
+            {
+                foreach (var fieldName in new[] { "chkAutoUpdate", "chkNotify" })
+                {
+                    var field = typeof(FrmSettings).GetField(fieldName, instanceFlags);
+                    var control = field?.GetValue(settings) as CheckBox;
+                    if (control == null)
+                        throw new InvalidOperationException($"Settings control '{fieldName}' was not found.");
+
+#if WIRESOCKUI_ENABLE_UWP
+                    AssertTrue(control.Enabled,
+                        $"Expected UWP settings control '{fieldName}' to remain available.");
+#else
+                    AssertFalse(control.Enabled,
+                        $"Expected unsupported classic setting '{fieldName}' to be disabled.");
+                    AssertFalse((bool)getControlState.Invoke(control, new object[] { 0x00000002 }),
+                        $"Expected unsupported classic setting '{fieldName}' to be hidden.");
+#endif
+                }
+
+                var cancellationField = typeof(FrmSettings).GetField(
+                    "_lifetimeCancellation",
+                    instanceFlags);
+                var cancellation = cancellationField?.GetValue(settings) as CancellationTokenSource;
+                if (cancellation == null)
+                    throw new InvalidOperationException("Settings lifetime cancellation source was not found.");
+
+                settings.CancelPendingOperations();
+                settings.CancelPendingOperations();
+                AssertTrue(cancellation.IsCancellationRequested,
+                    "Expected settings shutdown cancellation to be idempotent and observable by helper operations.");
+            }
+
+            var editor = new FrmEdit();
+            var editorText =
+                typeof(FrmEdit).GetField("txtEditor", instanceFlags)?.GetValue(editor) as RichTextBox;
+            if (editorText == null)
+                throw new InvalidOperationException("The profile editor text control was not found.");
+            AssertEqual(checked((int)Profile.MaxProfileSizeBytes), editorText.MaxLength);
+            editor.Dispose();
+            AssertTrue(
+                typeof(FrmEdit).GetField("_highlightTimer", instanceFlags)?.GetValue(editor) == null,
+                "Expected profile-editor timer resources to be released.");
+
+            var taskManager = new TaskManager();
+            var search =
+                typeof(TaskManager).GetField("txtSearch", instanceFlags)?.GetValue(taskManager) as TextBox;
+            if (search == null)
+                throw new InvalidOperationException("The process search control was not found.");
+            AssertEqual(260, search.MaxLength);
+            taskManager.Dispose();
+            AssertTrue(
+                typeof(TaskManager).GetField("_filterTimer", instanceFlags)?.GetValue(taskManager) == null,
+                "Expected process-filter timer resources to be released.");
+        }
+
+        private static void SettingsCopiesSecuredProfilesPathWithoutShellActivation()
+        {
+            var folder = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "WireSockUI",
+                "Configs");
+            AssertEqual(
+                Path.GetFullPath(folder),
+                FrmSettings.GetProfilesFolderPathForClipboard(folder));
+            AssertThrows<DirectoryNotFoundException>(
+                () => FrmSettings.GetProfilesFolderPathForClipboard("relative-profiles"),
+                "absolute path");
+
+            AssertTrue(
+                typeof(UnelevatedProcessLauncher).GetMethod(
+                    "OpenFolder",
+                    BindingFlags.NonPublic | BindingFlags.Static) == null,
+                "Expected the medium-integrity Explorer folder-launch surface to be removed.");
+
+            using (var settings = new FrmSettings())
+            {
+                var copyButton = typeof(FrmSettings).GetField(
+                        "btnCopyProfilesFolderPath",
+                        BindingFlags.Instance | BindingFlags.NonPublic)
+                    ?.GetValue(settings) as Button;
+                if (copyButton == null)
+                    throw new InvalidOperationException(
+                        "The copy-profiles-folder-path button was not found.");
+
+                AssertTrue(
+                    copyButton.Text.IndexOf("copy", StringComparison.OrdinalIgnoreCase) >= 0,
+                    $"Expected the profiles action to describe copying the path, got '{copyButton.Text}'.");
+            }
+        }
+
         private static void EditorBoundsSynchronousSyntaxHighlighting()
         {
             AssertTrue(FrmEdit.ShouldApplySyntaxHighlighting(FrmEdit.MaximumSyntaxHighlightCharacters),
@@ -3515,6 +4230,9 @@ namespace WireSockUI.Tests
             AssertEqual(
                 "abcd...",
                 ProfileDisplayFormatter.FormatCommaSeparated("abcd\U0001f600z", 1, 1, 8));
+            AssertEqual(
+                "a...",
+                ProfileDisplayFormatter.FormatCommaSeparated("a,b", 2, 1, 5));
         }
 
         private static void LegacyMigrationAcceptsScriptsOnlyIntoQuarantine()
@@ -3774,7 +4492,8 @@ namespace WireSockUI.Tests
 
         private static void WindowsCompatibilityManifestEnablesModernBehavior()
         {
-            var manifest = XDocument.Load(FindRepositoryFile("WireSockUI", "Properties", "app.manifest"));
+            var manifest =
+                XDocument.Load(FindRepositoryFile("WireSockUI.Bootstrap", "bootstrap.manifest"));
             var elements = manifest.Descendants().ToArray();
             AssertTrue(elements.Any(element => element.Name.LocalName == "supportedOS" &&
                                                string.Equals((string)element.Attribute("Id"),
@@ -3812,6 +4531,211 @@ namespace WireSockUI.Tests
                 BindingFlags.NonPublic | BindingFlags.Static);
             AssertTrue(unicodePathCapacity != null, "Expected the long shell-link path buffer constant.");
             AssertEqual(32768, (int)unicodePathCapacity.GetRawConstantValue());
+        }
+
+        private static void ElevationManifestEstablishesNativePreClrBoundary()
+        {
+            var nativeManifest =
+                XDocument.Load(FindRepositoryFile("WireSockUI.Bootstrap", "bootstrap.manifest"));
+            var nativeExecutionLevel = nativeManifest.Descendants()
+                .Single(element => element.Name.LocalName == "requestedExecutionLevel");
+            AssertEqual("requireAdministrator", (string)nativeExecutionLevel.Attribute("level"));
+
+            var project = XDocument.Load(FindRepositoryFile("WireSockUI", "WireSockUI.csproj"));
+            AssertTrue(project.Descendants("AssemblyName")
+                           .Any(element => string.Equals(
+                               element.Value,
+                               "WireSockUI.Managed",
+                               StringComparison.Ordinal)),
+                "Expected the managed payload to have a distinct, non-launcher filename.");
+            AssertTrue(project.Descendants("OutputType")
+                           .Any(element => string.Equals(
+                               element.Value,
+                               "Library",
+                               StringComparison.Ordinal)),
+                "Expected the managed payload not to be directly executable.");
+            AssertFalse(project.Descendants("ApplicationManifest").Any(),
+                "The managed library must not retain a second, ineffective application manifest.");
+            AssertFalse(project.Descendants()
+                    .Any(element =>
+                        string.Equals(
+                            (string)element.Attribute("Include"),
+                            @"Properties\app.manifest",
+                            StringComparison.OrdinalIgnoreCase)),
+                "The obsolete managed application manifest must not remain in the project.");
+            AssertTrue(project.Descendants("AutoGenerateBindingRedirects")
+                           .Any(element => string.Equals(
+                               element.Value,
+                               "true",
+                               StringComparison.OrdinalIgnoreCase)),
+                "Expected the native-host configuration to retain generated binding redirects.");
+            var buildNativeBootstrap = project.Descendants("Target")
+                .Single(element => string.Equals(
+                    (string)element.Attribute("Name"),
+                    "BuildNativeBootstrap",
+                    StringComparison.Ordinal));
+            AssertTrue(
+                ((string)buildNativeBootstrap.Attribute("Condition") ?? string.Empty)
+                    .IndexOf(
+                        "'$(_IsPublishing)' != 'true'",
+                        StringComparison.Ordinal) >= 0,
+                "Publish builds must not create a misleading TargetDir launcher beside the reserved publish subtree.");
+            var removePublishIntermediateNativeBootstrap = project.Descendants("Target")
+                .Single(element => string.Equals(
+                    (string)element.Attribute("Name"),
+                    "RemovePublishIntermediateNativeBootstrap",
+                    StringComparison.Ordinal));
+            AssertTrue(
+                string.Equals(
+                    (string)removePublishIntermediateNativeBootstrap.Attribute("BeforeTargets"),
+                    "PrepareForPublish",
+                    StringComparison.Ordinal) &&
+                (((string)removePublishIntermediateNativeBootstrap.Attribute("Condition") ??
+                  string.Empty).IndexOf(
+                    "'$(_IsPublishing)' == 'true'",
+                    StringComparison.Ordinal) >= 0) &&
+                removePublishIntermediateNativeBootstrap.Elements("Delete").Any(element =>
+                    string.Equals(
+                        (string)element.Attribute("Files"),
+                        "$(TargetDir)WireSockUI.exe",
+                        StringComparison.Ordinal)),
+                "Normal and no-build publishes must remove a stale TargetDir launcher before producing the validated PublishDir launcher.");
+
+            var bootstrapSource =
+                File.ReadAllText(FindRepositoryFile("WireSockUI.Bootstrap", "bootstrap.cpp"));
+            foreach (var requiredBoundary in new[]
+                     {
+                         "WireSockUI.Managed.dll",
+                         "WireSockUI.exe.config",
+                         "FILE_FLAG_OPEN_REPARSE_POINT",
+                         "ACCESS_ALLOWED_CALLBACK_ACE_TYPE",
+                         "ACCESS_ALLOWED_COMPOUND_ACE_TYPE",
+                         "BCryptHashData",
+                         "ParsePayloadManifest",
+                         "CompareStringOrdinal",
+                         "seenPayloadFiles",
+                         "Unexpected payload file",
+                         "IsIgnoredDevelopmentMetadataFile",
+                         "SanitizeRuntimeEnvironment",
+                         "SetDefaultDllDirectories",
+                         "SetDefaultStartupFlags",
+                         "ExecuteInDefaultAppDomain",
+                         "COINIT_APARTMENTTHREADED",
+                         "MinimumNetFrameworkRelease = 533320",
+                         "CORECLR_",
+                         "COMPLUS_",
+                         "APPDOMAIN_MANAGER_ASM"
+                     })
+                AssertTrue(
+                    bootstrapSource.IndexOf(requiredBoundary, StringComparison.Ordinal) >= 0,
+                    $"Expected the native pre-CLR boundary to contain '{requiredBoundary}'.");
+
+            foreach (var obsoleteBoundary in new[]
+                     {
+                         "WireSockUI.Managed.exe\"",
+                         "CreateProcessW(",
+                         "AssignProcessToJobObject",
+                         "JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE"
+                     })
+                AssertFalse(
+                    bootstrapSource.IndexOf(obsoleteBoundary, StringComparison.Ordinal) >= 0,
+                    $"Expected the obsolete child-process boundary '{obsoleteBoundary}' to be absent.");
+
+            var bootstrapBuild =
+                File.ReadAllText(FindRepositoryFile("scripts", "Build-NativeBootstrap.ps1"));
+            foreach (var requiredBuildControl in new[]
+                     {
+                         "/DEPENDENTLOADFLAG:0x800",
+                         "/DELAYLOAD:bcrypt.dll",
+                         ".staging.tmp",
+                         "Assert-NativeBootstrap",
+                         "Assert-ManagedAssemblyPlatform",
+                         "Assert-PayloadSnapshot",
+                         "Test-IsIgnoredBuildMetadataPath"
+                     })
+                AssertTrue(
+                    bootstrapBuild.IndexOf(requiredBuildControl, StringComparison.Ordinal) >= 0,
+                    $"Expected native bootstrap construction to enforce '{requiredBuildControl}'.");
+
+            var bootstrapValidation =
+                File.ReadAllText(FindRepositoryFile("scripts", "NativeBootstrap.Validation.psm1"));
+            foreach (var requiredValidation in new[]
+                     {
+                         "DependentLoadFlags",
+                         "allowedNormalImports",
+                         "RequireProductionBuild",
+                         "Get-NativeBootstrapManifest"
+                     })
+                AssertTrue(
+                    bootstrapValidation.IndexOf(requiredValidation, StringComparison.Ordinal) >= 0,
+                    $"Expected post-sign native bootstrap validation to enforce '{requiredValidation}'.");
+
+            AssertEqual(
+                WireSockUI.Program.NativeLauncherFileName,
+                Path.GetFileName(WireSockUI.Program.ApplicationLauncherPath));
+            AssertEqual(
+                WireSockUI.Program.NativeLauncherFileName + ".config",
+                Path.GetFileName(WireSockUI.Program.ApplicationConfigurationPath));
+        }
+
+        private static void BrowserActivationPermitsOnlyCredentialFreeHttps()
+        {
+            AssertTrue(
+                UnelevatedProcessLauncher.TryValidateHttpsUrl(
+                    "https://example.com/releases?q=stable",
+                    out var uri,
+                    out var diagnostic),
+                diagnostic ?? "Expected a valid HTTPS address.");
+            AssertEqual("https", uri.Scheme);
+
+            foreach (var rejected in new[]
+                     {
+                         "http://example.com/",
+                         "file:///C:/Windows/System32/cmd.exe",
+                         "https://user:password@example.com/",
+                         "https://",
+                         "https://example.com/\r\nignored"
+                     })
+                AssertFalse(
+                    UnelevatedProcessLauncher.TryValidateHttpsUrl(
+                        rejected,
+                        out _,
+                        out _),
+                    $"Expected unsafe shell target '{rejected}' to be rejected.");
+        }
+
+        private static void WindowsArgumentQuotingPreservesShellTargets()
+        {
+            AssertEqual("plain", UnelevatedProcessLauncher.QuoteWindowsArgument("plain"));
+            AssertEqual(
+                "\"two words\"",
+                UnelevatedProcessLauncher.QuoteWindowsArgument("two words"));
+            AssertEqual(
+                "\"C:\\path with space\\\\\"",
+                UnelevatedProcessLauncher.QuoteWindowsArgument(@"C:\path with space\"));
+            AssertEqual(
+                "\"a\\\"b\"",
+                UnelevatedProcessLauncher.QuoteWindowsArgument("a\"b"));
+        }
+
+        private static void ProgramRejectsNonLocalApplicationPaths()
+        {
+            AssertFalse(
+                WireSockUI.Program.TryValidateLocalFixedPath(
+                    @"\\server\share\WireSockUI.Managed.exe",
+                    "Application",
+                    out var networkDiagnostic),
+                "Expected UNC application paths to be rejected before ACL inspection.");
+            AssertTrue(
+                networkDiagnostic?.IndexOf("local", StringComparison.OrdinalIgnoreCase) >= 0,
+                $"Expected a local-volume diagnostic, got '{networkDiagnostic}'.");
+
+            AssertFalse(
+                WireSockUI.Program.TryValidateLocalFixedPath(
+                    @"\\?\C:\WireSockUI.Managed.exe",
+                    "Application",
+                    out _),
+                "Expected device-namespace application paths to be rejected.");
         }
 
         private static void AutoRunTaskNameIsPathAndUserSeeded()
@@ -4496,6 +5420,66 @@ namespace WireSockUI.Tests
             });
         }
 
+        private static void LifecycleShutdownQueuesCleanupBehindInFlightNativeWork()
+        {
+            WithTemporaryConfigFolder(() =>
+            {
+                var originalKillSwitch = TestKillSwitch;
+                var nativeApi = new FakeWireSockNativeApi
+                {
+                    StartEntered = new ManualResetEventSlim(false),
+                    ContinueStart = new ManualResetEventSlim(false)
+                };
+                using (nativeApi.StartEntered)
+                using (nativeApi.ContinueStart)
+                using (var manager = new WireSockManager(nativeApi))
+                {
+                    try
+                    {
+                        TestKillSwitch = false;
+                        File.WriteAllText(Profile.GetProfilePath("office"), ValidConfig());
+                        var controller = new TunnelLifecycleController(manager, new FakeNetworkLockApi());
+
+                        var connectTask = controller.ConnectAsync("office", false, 5000);
+                        AssertTrue(nativeApi.StartEntered.Wait(1000),
+                            "Expected the fake native connect operation to start.");
+
+                        var shutdownResult = controller.ShutdownAsync(50).GetAwaiter().GetResult();
+                        AssertTrue(shutdownResult.TimedOut,
+                            "Expected shutdown to return its own deadline while waiting behind native work.");
+                        AssertFalse(shutdownResult.Busy,
+                            "Expected shutdown cleanup to remain queued rather than being discarded as busy.");
+                        AssertTrue(shutdownResult.PendingCompletion != null,
+                            "Expected queued shutdown cleanup to expose its eventual completion.");
+
+                        var rejectedQuery = controller.GetConnectedAsync(1000).GetAwaiter().GetResult();
+                        AssertFalse(rejectedQuery.Succeeded,
+                            "Expected new native work to be rejected once shutdown begins.");
+                        AssertTrue(
+                            rejectedQuery.Diagnostic?.IndexOf(
+                                "shutting down",
+                                StringComparison.OrdinalIgnoreCase) >= 0,
+                            $"Expected an actionable shutdown rejection, got '{rejectedQuery.Diagnostic}'.");
+
+                        nativeApi.ContinueStart.Set();
+                        AssertTrue(connectTask.GetAwaiter().GetResult().Succeeded,
+                            "Expected the already-running native connect operation to finish authoritatively.");
+                        var completedShutdown = shutdownResult.PendingCompletion.GetAwaiter().GetResult();
+                        AssertTrue(completedShutdown.Succeeded,
+                            completedShutdown.Diagnostic ??
+                            "Expected queued shutdown cleanup to run after the native connect operation.");
+                        AssertFalse(manager.HasTunnelHandle,
+                            "Expected queued shutdown cleanup to release the newly created native handle.");
+                    }
+                    finally
+                    {
+                        nativeApi.ContinueStart.Set();
+                        TestKillSwitch = originalKillSwitch;
+                    }
+                }
+            });
+        }
+
         private static void LifecycleAwaitsLateNetworkLockReset()
         {
             var networkLockApi = new FakeNetworkLockApi
@@ -4538,7 +5522,7 @@ namespace WireSockUI.Tests
             }
         }
 
-        private static void LifecycleShutdownResetsActiveLockAfterCleanupFailure()
+        private static void LifecycleShutdownPreservesActiveLockWhenHandleCleanupFails()
         {
             WithTemporaryConfigFolder(() =>
             {
@@ -4563,10 +5547,10 @@ namespace WireSockUI.Tests
                         "Expected shutdown to report the retained native handle.");
                     AssertFalse(shutdownResult.TimedOut,
                         "Expected the simulated cleanup failure to complete within the shutdown budget.");
-                    AssertEqual(1, networkLockApi.QueryCount);
-                    AssertEqual(1, networkLockApi.ResetCount);
-                    AssertFalse(networkLockApi.Active,
-                        "Expected completed shutdown failure to reset an active global network lock.");
+                    AssertEqual(0, networkLockApi.QueryCount);
+                    AssertEqual(0, networkLockApi.ResetCount);
+                    AssertTrue(networkLockApi.Active,
+                        "Expected the network lock to remain active while the native tunnel handle is retained.");
                 }
                 finally
                 {
@@ -4968,6 +5952,44 @@ namespace WireSockUI.Tests
             }
         }
 
+        private static void TunnelMonitorBoundsBusyConnectingState()
+        {
+            var generation = 1;
+            var queryCount = 0;
+            var updateSource = new TaskCompletionSource<TunnelMonitorUpdate>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+
+            using (var monitor = new TunnelMonitor(
+                       _ =>
+                       {
+                           Interlocked.Increment(ref queryCount);
+                           return Task.FromResult(NativeOperationResult<bool>.OperationBusy(
+                               "simulated busy native scheduler"));
+                       },
+                       _ => Task.FromResult(NativeOperationResult<WireguardBoosterExports.WgbStats>.Success(
+                           new WireguardBoosterExports.WgbStats())),
+                       () => generation,
+                       update =>
+                       {
+                           updateSource.TrySetResult(update);
+                           return Task.CompletedTask;
+                       },
+                       10,
+                       25,
+                       1,
+                       1))
+            {
+                monitor.StartConnecting(generation);
+                AssertTrue(updateSource.Task.Wait(2000),
+                    "Expected a continuously busy native scheduler to reach the connection deadline.");
+
+                var update = updateSource.Task.GetAwaiter().GetResult();
+                AssertEqual((int)TunnelMonitorUpdateKind.ConnectionTimedOut, (int)update.Kind);
+                AssertTrue(Volatile.Read(ref queryCount) > 0,
+                    "Expected the connection monitor to poll before reporting its bounded timeout.");
+            }
+        }
+
         private static void ProgramReportsAttributeInspectionFailures()
         {
             var missingPath = Path.Combine(Path.GetTempPath(), "WireSockUI.Tests", $"{Guid.NewGuid():N}.dll");
@@ -5145,6 +6167,34 @@ namespace WireSockUI.Tests
                 "Expected unexpected monitor failure diagnostics to preserve the escaped message.");
         }
 
+        private static void TunnelMonitorHandlerFailuresFailClosed()
+        {
+            string recoveryDiagnostic = null;
+            var recoveryRequired = FrmMain.TryRequireTunnelMonitorRecovery(
+                new InvalidOperationException("simulated UI handler failure"),
+                "tunnel monitor update handling failure",
+                () => true,
+                diagnostic => recoveryDiagnostic = diagnostic);
+
+            AssertTrue(recoveryRequired,
+                "Expected an active monitor-handler failure to require native recovery.");
+            AssertTrue(recoveryDiagnostic != null &&
+                       recoveryDiagnostic.Contains("tunnel monitor update handling failure") &&
+                       recoveryDiagnostic.Contains("simulated UI handler failure"),
+                "Expected fail-closed recovery to retain actionable handler context.");
+
+            recoveryDiagnostic = null;
+            recoveryRequired = FrmMain.TryRequireTunnelMonitorRecovery(
+                new InvalidOperationException("stale handler failure"),
+                "tunnel monitor update handling failure",
+                () => false,
+                diagnostic => recoveryDiagnostic = diagnostic);
+            AssertFalse(recoveryRequired,
+                "Expected stale or shutdown monitor callbacks not to alter recovery state.");
+            AssertTrue(recoveryDiagnostic == null,
+                "Expected a suppressed stale failure not to invoke recovery.");
+        }
+
         private static void TunnelMonitorUiDispatchAwaitsMarshaledUpdates()
         {
             var actionStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -5157,7 +6207,11 @@ namespace WireSockUI.Tests
                 {
                     actionStarted.TrySetResult(true);
                     await actionRelease.Task;
-                });
+                },
+                Thread.CurrentThread.ManagedThreadId + 1,
+                () => true,
+                CancellationToken.None,
+                Timeout.Infinite);
 
                 AssertFalse(actionStarted.Task.IsCompleted, "Expected the queued UI callback not to run early.");
 
@@ -5173,6 +6227,90 @@ namespace WireSockUI.Tests
             finally
             {
                 actionRelease.TrySetResult(true);
+            }
+        }
+
+        private static void UiDispatchNeverRunsInlineOnWorkerWithoutHandle()
+        {
+            var uiThreadId = Thread.CurrentThread.ManagedThreadId;
+            var actionCount = 0;
+            var synchronizer = new QueuedSynchronizeInvoke(invokeRequired: false);
+
+            var dispatched = Task.Run(() => FrmMain.TryDispatchOnUiThread(
+                    synchronizer,
+                    () => Interlocked.Increment(ref actionCount),
+                    uiThreadId,
+                    isHandleCreated: false,
+                    CancellationToken.None))
+                .GetAwaiter()
+                .GetResult();
+
+            AssertFalse(dispatched,
+                "Expected a worker callback without a live UI handle not to be dispatched.");
+            AssertEqual(0, Volatile.Read(ref actionCount));
+            AssertEqual(0, synchronizer.BeginInvokeCount);
+
+            var asyncActionCount = 0;
+            AssertThrows<InvalidOperationException>(
+                () => Task.Run(() => FrmMain.InvokeOnUiThreadAsync(
+                        synchronizer,
+                        () =>
+                        {
+                            Interlocked.Increment(ref asyncActionCount);
+                            return Task.CompletedTask;
+                        },
+                        uiThreadId,
+                        () => false,
+                        CancellationToken.None,
+                        Timeout.Infinite))
+                    .GetAwaiter()
+                    .GetResult(),
+                "live window handle");
+            AssertEqual(0, Volatile.Read(ref asyncActionCount));
+            AssertEqual(0, synchronizer.BeginInvokeCount);
+
+            var destroyedSynchronizer = new QueuedSynchronizeInvoke
+            {
+                BeginInvokeException = new InvalidOperationException("dispatcher destroyed")
+            };
+            AssertThrows<InvalidOperationException>(
+                () => Task.Run(() => FrmMain.InvokeOnUiThreadAsync(
+                        destroyedSynchronizer,
+                        () =>
+                        {
+                            Interlocked.Increment(ref asyncActionCount);
+                            return Task.CompletedTask;
+                        },
+                        uiThreadId,
+                        () => true,
+                        CancellationToken.None,
+                        Timeout.Infinite))
+                    .GetAwaiter()
+                    .GetResult(),
+                "dispatcher destroyed");
+            AssertEqual(0, Volatile.Read(ref asyncActionCount));
+
+            using (var handleGenerationCancellation = new CancellationTokenSource())
+            {
+                var canceledActionCount = 0;
+                var canceledDispatch = FrmMain.InvokeOnUiThreadAsync(
+                    synchronizer,
+                    () =>
+                    {
+                        Interlocked.Increment(ref canceledActionCount);
+                        return Task.CompletedTask;
+                    },
+                    uiThreadId + 1,
+                    () => true,
+                    handleGenerationCancellation.Token,
+                    Timeout.Infinite);
+
+                handleGenerationCancellation.Cancel();
+                AssertThrows<OperationCanceledException>(
+                    () => canceledDispatch.GetAwaiter().GetResult(),
+                    string.Empty);
+                synchronizer.RunCallback();
+                AssertEqual(0, Volatile.Read(ref canceledActionCount));
             }
         }
 
@@ -5346,6 +6484,33 @@ namespace WireSockUI.Tests
                 retryDispatches.Dequeue()();
                 AssertEqual(1, retriedMessages.Count);
                 AssertEqual("before-handle", retriedMessages[0].Message);
+            }
+
+            var throwingDispatches = new Queue<Action>();
+            var messagesAfterScheduleFailure = new List<WireSockManager.LogMessage>();
+            var throwWhileScheduling = true;
+            using (var buffer = new UiLogMessageBuffer(
+                       4,
+                       2,
+                       action =>
+                       {
+                           if (throwWhileScheduling)
+                               throw new InvalidOperationException("dispatcher unavailable");
+
+                           throwingDispatches.Enqueue(action);
+                           return true;
+                       },
+                       batch => messagesAfterScheduleFailure.AddRange(batch)))
+            {
+                buffer.Enqueue(new WireSockManager.LogMessage { Message = "after-schedule-failure" });
+                AssertEqual(0, throwingDispatches.Count);
+
+                throwWhileScheduling = false;
+                buffer.RetryPendingDispatch();
+                AssertEqual(1, throwingDispatches.Count);
+                throwingDispatches.Dequeue()();
+                AssertEqual(1, messagesAfterScheduleFailure.Count);
+                AssertEqual("after-schedule-failure", messagesAfterScheduleFailure[0].Message);
             }
         }
 
@@ -6243,11 +7408,23 @@ namespace WireSockUI.Tests
         {
             private object[] _arguments;
             private Delegate _callback;
+            private readonly bool _invokeRequired;
 
-            public bool InvokeRequired => true;
+            internal QueuedSynchronizeInvoke(bool invokeRequired = true)
+            {
+                _invokeRequired = invokeRequired;
+            }
+
+            public bool InvokeRequired => _invokeRequired;
+            internal int BeginInvokeCount { get; private set; }
+            internal Exception BeginInvokeException { get; set; }
 
             public IAsyncResult BeginInvoke(Delegate method, object[] args)
             {
+                if (BeginInvokeException != null)
+                    throw BeginInvokeException;
+
+                BeginInvokeCount++;
                 _callback = method;
                 _arguments = args;
                 return Task.CompletedTask;

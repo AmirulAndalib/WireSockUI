@@ -204,6 +204,7 @@ namespace WireSockUI.Native
         {
             _ensureDirectory();
             var path = _pathProvider();
+            CleanupOrphanTemporaryFiles(path);
             var temporaryPath = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
             try
             {
@@ -257,6 +258,63 @@ namespace WireSockUI.Native
                     }
                 }
             }
+        }
+
+        private static void CleanupOrphanTemporaryFiles(string markerPath)
+        {
+            var directory = Path.GetDirectoryName(markerPath);
+            var markerFileName = Path.GetFileName(markerPath);
+            if (string.IsNullOrWhiteSpace(directory) || string.IsNullOrWhiteSpace(markerFileName))
+                throw new InvalidOperationException("The native recovery marker path is invalid.");
+
+            var entries = 0;
+            using (SecureFileSystem.OpenDirectory(directory, false))
+            {
+                foreach (var path in Directory.EnumerateFileSystemEntries(
+                             directory,
+                             "*",
+                             SearchOption.TopDirectoryOnly))
+                {
+                    entries++;
+                    if (entries > Global.MaxSecuredTreeEntries)
+                        throw new InvalidDataException(
+                            $"The native recovery marker folder contains more than {Global.MaxSecuredTreeEntries} entries while cleaning interrupted writes.");
+
+                    if (!IsManagedTemporaryFileName(Path.GetFileName(path), markerFileName))
+                        continue;
+
+                    try
+                    {
+                        using (var temporaryFile = SecureFileSystem.OpenFileForDelete(path))
+                            temporaryFile.Delete();
+                    }
+                    catch (FileNotFoundException)
+                    {
+                    }
+                    catch (DirectoryNotFoundException)
+                    {
+                    }
+                }
+            }
+        }
+
+        private static bool IsManagedTemporaryFileName(string fileName, string markerFileName)
+        {
+            var prefix = markerFileName + ".";
+            const string suffix = ".tmp";
+            if (string.IsNullOrEmpty(fileName) ||
+                !fileName.StartsWith(prefix, StringComparison.Ordinal) ||
+                !fileName.EndsWith(suffix, StringComparison.Ordinal))
+                return false;
+
+            var identifierLength = fileName.Length - prefix.Length - suffix.Length;
+            if (identifierLength != 32)
+                return false;
+
+            return Guid.TryParseExact(
+                fileName.Substring(prefix.Length, identifierLength),
+                "N",
+                out _);
         }
 
         private bool CurrentMarkerBelongsTo(NativeRecoveryMarkerLease lease)
