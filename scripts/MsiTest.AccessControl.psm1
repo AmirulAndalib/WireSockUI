@@ -1,11 +1,11 @@
 Set-StrictMode -Version Latest
 
-[Int64]$writeCapableFileSystemRightsMask =
-    [Int64][Security.AccessControl.FileSystemRights]::Write -bor
-    [Int64][Security.AccessControl.FileSystemRights]::Delete -bor
-    [Int64][Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
-    [Int64][Security.AccessControl.FileSystemRights]::ChangePermissions -bor
-    [Int64][Security.AccessControl.FileSystemRights]::TakeOwnership
+# GENERIC_READ and GENERIC_EXECUTE have no FileSystemRights enum names.
+[Int64]$safeFileSystemRightsMask =
+    [Int64][Security.AccessControl.FileSystemRights]::ReadAndExecute -bor
+    [Int64][Security.AccessControl.FileSystemRights]::Synchronize -bor
+    0x80000000L -bor
+    0x20000000L
 
 function Test-MsiWriteCapableFileSystemRights {
     param(
@@ -13,11 +13,13 @@ function Test-MsiWriteCapableFileSystemRights {
         [Security.AccessControl.FileSystemRights]$Rights
     )
 
-    # FileSystemRights.Modify is deliberately not part of the mask: it is a
-    # composite that includes ReadAndExecute. Its unsafe Write and Delete
-    # components are already represented by the explicit mutation masks above.
+    # FileSystemRights omits names for the raw GENERIC_* access-mask bits and
+    # represents GENERIC_READ as a negative enum value. Normalize to the native
+    # 32-bit mask and fail closed on everything except read/execute/synchronize.
+    [Int64]$normalizedRights = [Int64]$Rights -band 0xffffffffL
     return (
-        ([Int64]$Rights -band $writeCapableFileSystemRightsMask) -ne 0)
+        ($normalizedRights -band $safeFileSystemRightsMask) -ne
+        $normalizedRights)
 }
 
 Export-ModuleMember -Function Test-MsiWriteCapableFileSystemRights
