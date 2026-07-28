@@ -715,14 +715,14 @@ try {
         -ShouldPass $false
     Invoke-Fixture `
         -Name quoted-write-all `
-        -Workflow $validWorkflow.Replace(
-            "  test:`n    runs-on:",
+        -Workflow ($validWorkflow -replace
+            '(?m)^  test:\r?\n    runs-on:',
             "  test:`n    permissions: `"write-all`"`n    runs-on:") `
         -ShouldPass $false
     Invoke-Fixture `
         -Name escaped-write-all-key `
-        -Workflow $validWorkflow.Replace(
-            "  test:`n    runs-on:",
+        -Workflow ($validWorkflow -replace
+            '(?m)^  test:\r?\n    runs-on:',
             '  test:
     "permiss\u0069ons": write-all
     runs-on:') `

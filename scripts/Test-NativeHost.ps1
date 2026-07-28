@@ -238,7 +238,12 @@ function Invoke-NativeHostProbe {
     }
 }
 
-Invoke-NativeHostProbe -Path $resolvedLauncher
+if ($SkipBcryptSentinel) {
+    # Installed launchers live under an administrator-owned directory and can
+    # be probed in place. Build outputs intentionally remain user-writable, so
+    # Debug validation uses the private staged payload created below.
+    Invoke-NativeHostProbe -Path $resolvedLauncher
+}
 
 if (-not $SkipBcryptSentinel) {
     $platform = Get-PortableExecutablePlatform -Path $resolvedLauncher
@@ -267,6 +272,15 @@ if (-not $SkipBcryptSentinel) {
                 -Destination $payloadDirectory `
                 -Recurse
         }
+
+        # Exercise the exact launcher produced by the project after moving the
+        # complete payload under a trusted Debug-only ACL. This preserves build
+        # integration coverage without weakening the application's path policy.
+        $testLauncherPath = Join-Path $payloadDirectory 'WireSockUI.exe'
+        Copy-Item `
+            -LiteralPath $resolvedLauncher `
+            -Destination $testLauncherPath
+        Invoke-NativeHostProbe -Path $testLauncherPath
 
         Initialize-VisualCppEnvironment -Platform $platform
         $sentinelSourcePath = Join-Path $buildDirectory 'bcrypt-sentinel.cpp'
@@ -410,7 +424,6 @@ extern "C" LONG WINAPI SentinelFinishHash(void*, unsigned char*, ULONG, ULONG)
             $expectedPayload,
             [Text.UTF8Encoding]::new($false))
 
-        $testLauncherPath = Join-Path $payloadDirectory 'WireSockUI.exe'
         $launcherVersion =
             [Diagnostics.FileVersionInfo]::GetVersionInfo($resolvedLauncher).ProductVersion
         & $buildBootstrap `
