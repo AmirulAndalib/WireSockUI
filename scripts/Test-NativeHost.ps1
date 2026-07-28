@@ -407,9 +407,11 @@ BOOL WINAPI DllMain(HINSTANCE, DWORD reason, LPVOID)
         return TRUE;
 
     wchar_t marker[32768] = {};
+    constexpr DWORD markerCapacity =
+        static_cast<DWORD>(sizeof(marker) / sizeof(marker[0]));
     const DWORD length = GetEnvironmentVariableW(
-        MarkerVariable, marker, static_cast<DWORD>(_countof(marker)));
-    if (length == 0 || length >= _countof(marker))
+        MarkerVariable, marker, markerCapacity);
+    if (length == 0 || length >= markerCapacity)
         return TRUE;
 
     const HANDLE file = CreateFileW(
