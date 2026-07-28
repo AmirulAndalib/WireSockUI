@@ -9,9 +9,9 @@ permissions:
 
 jobs:
   sdk-integration:
-    # This temporary protected-main reference is replaced with the first rollout
-    # commit's full SHA in the immediately following pin-only commit.
-    uses: wiresock/WireSockUI/.github/workflows/sdk-integration.yml@main
+    # Load the privileged workflow from the audited immutable implementation
+    # commit rather than from a mutable branch or tag.
+    uses: wiresock/WireSockUI/.github/workflows/sdk-integration.yml@d5c3c7873c47e96319e4195daa482d0a6712021b
     with:
       require_sdk_validation: false
-      sdk_workflow_sha: ${{ github.sha }}
+      sdk_workflow_sha: d5c3c7873c47e96319e4195daa482d0a6712021b

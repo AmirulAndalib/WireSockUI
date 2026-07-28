@@ -114,14 +114,14 @@ jobs:
   sdk-integration:
     # Never execute pull-request code on the elevated SDK runners. Pull requests use
     # the pinned contract tests above. The privileged workflow definition is loaded
-    # from protected main rather than from the candidate commit.
+    # from the audited immutable implementation commit rather than the candidate.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs:
       - sdk-contract
       - test
-    uses: wiresock/WireSockUI/.github/workflows/sdk-integration.yml@main
+    uses: wiresock/WireSockUI/.github/workflows/sdk-integration.yml@d5c3c7873c47e96319e4195daa482d0a6712021b
     with:
-      sdk_workflow_sha: ${{ github.sha }}
+      sdk_workflow_sha: d5c3c7873c47e96319e4195daa482d0a6712021b
 
   native-host-smoke:
     name: native-host-smoke (${{ matrix.platform }})
