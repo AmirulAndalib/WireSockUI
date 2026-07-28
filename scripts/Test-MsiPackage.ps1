@@ -1036,7 +1036,7 @@ try {
         ProductVersion = $ExpectedVersion
         UpgradeCode = $expectedUpgradeCode
         SecureCustomProperties =
-            'NETFRAMEWORK472RELEASE;WIX_DOWNGRADE_DETECTED;WIX_UPGRADE_DETECTED'
+            'NETFRAMEWORK472RELEASE;WINDOWSCURRENTBUILD;WIX_DOWNGRADE_DETECTED;WIX_UPGRADE_DETECTED'
     }
     $propertyRows = @(Get-MsiRows -Sql 'SELECT * FROM `Property`')
     $seenProperties = New-Object 'System.Collections.Generic.HashSet[string]' (
@@ -1151,7 +1151,13 @@ try {
     # SELECT * avoids Windows Installer SQL's parser ambiguity around the
     # RegLocator.Key column name. Schema order is Signature_, Root, Key, Name,
     # Type as defined by MSI 5.
-    $frameworkSearchRows = @(Get-MsiRows -Sql 'SELECT * FROM `RegLocator`')
+    $registrySearchRows = @(Get-MsiRows -Sql 'SELECT * FROM `RegLocator`')
+    $frameworkSearchRows = @(
+        $registrySearchRows |
+            Where-Object {
+                [string]$_[0] -ceq 'NetFramework472ReleaseSearch'
+            }
+    )
     if ($frameworkSearchRows.Count -ne 1 -or
         [string]$frameworkSearchRows[0][0] -cne 'NetFramework472ReleaseSearch' -or
         [int]$frameworkSearchRows[0][1] -ne 2 -or
@@ -1160,11 +1166,40 @@ try {
         [int]$frameworkSearchRows[0][4] -ne 2) {
         throw 'MSI does not search the documented 32-bit .NET Framework release key.'
     }
+    $windowsBuildSearchRows = @(
+        $registrySearchRows |
+            Where-Object {
+                [string]$_[0] -ceq 'WindowsCurrentBuildSearch'
+            }
+    )
+    if ($registrySearchRows.Count -ne 2 -or
+        $windowsBuildSearchRows.Count -ne 1 -or
+        [int]$windowsBuildSearchRows[0][1] -ne 2 -or
+        [string]$windowsBuildSearchRows[0][2] -cne
+            'SOFTWARE\Microsoft\Windows NT\CurrentVersion' -or
+        [string]$windowsBuildSearchRows[0][3] -cne 'CurrentBuildNumber' -or
+        [int]$windowsBuildSearchRows[0][4] -ne 2) {
+        throw 'MSI does not search the documented 32-bit-compatible Windows build number key.'
+    }
     $appSearchRows = @(Get-MsiRows -Sql 'SELECT * FROM `AppSearch`')
-    if ($appSearchRows.Count -ne 1 -or
-        [string]$appSearchRows[0][0] -cne 'NETFRAMEWORK472RELEASE' -or
-        [string]$appSearchRows[0][1] -cne 'NetFramework472ReleaseSearch') {
-        throw 'MSI AppSearch table differs from the one expected .NET Framework registry search.'
+    $frameworkAppSearchRows = @(
+        $appSearchRows |
+            Where-Object {
+                [string]$_[0] -ceq 'NETFRAMEWORK472RELEASE' -and
+                [string]$_[1] -ceq 'NetFramework472ReleaseSearch'
+            }
+    )
+    $windowsBuildAppSearchRows = @(
+        $appSearchRows |
+            Where-Object {
+                [string]$_[0] -ceq 'WINDOWSCURRENTBUILD' -and
+                [string]$_[1] -ceq 'WindowsCurrentBuildSearch'
+            }
+    )
+    if ($appSearchRows.Count -ne 2 -or
+        $frameworkAppSearchRows.Count -ne 1 -or
+        $windowsBuildAppSearchRows.Count -ne 1) {
+        throw 'MSI AppSearch table differs from the expected framework and Windows build registry searches.'
     }
     if (@(Get-MsiRows -Sql 'SELECT * FROM `Signature`').Count -ne 0) {
         throw 'MSI Signature table unexpectedly contains file-search signatures.'
@@ -1210,7 +1245,8 @@ try {
     $windowsConditionRows = @(
         $allLaunchConditionRows |
             Where-Object {
-                [string]$_[0] -ceq 'Installed OR VersionNT >= 1000' -and
+                [string]$_[0] -ceq
+                    'Installed OR WINDOWSCURRENTBUILD >= 10240' -and
                 [string]$_[1] -ceq 'WireSock UI requires Windows 10 or later.'
             }
     )

@@ -14,6 +14,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+Import-Module (Join-Path $PSScriptRoot 'MsiTest.Diagnostics.psm1') -Force
 $maximumMsiBytes = 2GB - 1
 $maximumValidationMetadataBytes = 4MB
 
@@ -534,12 +535,20 @@ function Wait-WindowsInstallerExecutionIdle {
 }
 
 function Invoke-MsiExec {
-    param([string[]]$Arguments)
+    param(
+        [Parameter(Mandatory = $true)][string]$Operation,
+        [Parameter(Mandatory = $true)][string[]]$Arguments
+    )
 
+    $script:operationIndex++
+    $safeOperation = $Operation -replace '[^A-Za-z0-9_.-]', '-'
+    $logPath = Join-Path $testRoot (
+        '{0:D2}-{1}.log' -f $script:operationIndex, $safeOperation)
+    $completeArguments = @($Arguments) + @('/l*vx!', $logPath)
     $startInfo = New-Object Diagnostics.ProcessStartInfo
     $startInfo.FileName = $trustedMsiExecPath
     $startInfo.Arguments = (
-        $Arguments |
+        $completeArguments |
             ForEach-Object { ConvertTo-WindowsCommandLineArgument -Value $_ }
     ) -join ' '
     $startInfo.UseShellExecute = $false
@@ -561,9 +570,17 @@ function Invoke-MsiExec {
             if (-not $clientExited -or -not $installerIdle) {
                 $script:installerStateSafeForCleanup = $false
             }
-            throw 'Windows Installer operation timed out; cleanup will be skipped unless the client exited and the execute mutex became idle.'
+            $diagnostic = Get-BoundedMsiLogDiagnostic -Path $logPath
+            throw (
+                "Windows Installer operation '$Operation' timed out; cleanup " +
+                'will be skipped unless the client exited and the execute ' +
+                "mutex became idle. Log: $logPath$([Environment]::NewLine)" +
+                $diagnostic)
         }
-        return $process.ExitCode
+        return [pscustomobject]@{
+            ExitCode = $process.ExitCode
+            LogPath = $logPath
+        }
     }
     finally {
         $process.Dispose()
@@ -572,16 +589,24 @@ function Invoke-MsiExec {
 
 function Assert-MsiOperationSucceeded {
     param(
-        [int]$ExitCode,
+        [Parameter(Mandatory = $true)][object]$Result,
         [string]$Operation
     )
 
-    if ($ExitCode -in @(1641, 3010)) {
+    if ($Result.ExitCode -in @(1641, 3010)) {
         $script:installerStateSafeForCleanup = $false
-        throw "$Operation initiated or requested a reboot (exit code $ExitCode). Refusing further installer operations or filesystem cleanup."
+        $diagnostic = Get-BoundedMsiLogDiagnostic -Path $Result.LogPath
+        throw (
+            "$Operation initiated or requested a reboot (exit code " +
+            "$($Result.ExitCode)). Refusing further installer operations or " +
+            "filesystem cleanup. Log: $($Result.LogPath)" +
+            "$([Environment]::NewLine)$diagnostic")
     }
-    if ($ExitCode -ne 0) {
-        throw "$Operation failed with exit code $ExitCode."
+    if ($Result.ExitCode -ne 0) {
+        $diagnostic = Get-BoundedMsiLogDiagnostic -Path $Result.LogPath
+        throw (
+            "$Operation failed with exit code $($Result.ExitCode). Log: " +
+            "$($Result.LogPath)$([Environment]::NewLine)$diagnostic")
     }
 }
 
@@ -690,6 +715,7 @@ if ($relatedProductCodes.Count -ne 0) {
 
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) (
     'WireSockUI.Msi.InstallTest.' + [Guid]::NewGuid().ToString('N'))
+$operationIndex = 0
 $sentinelRoot = Join-Path $testRoot 'legacy-junction-target'
 $sentinelPath = Join-Path $sentinelRoot 'must-not-change.txt'
 $sentinelContent = 'WireSock UI MSI legacy-path sentinel'
@@ -722,7 +748,7 @@ try {
     }
     & (Join-Path $PSScriptRoot 'Test-MsiPackage.ps1') @packageValidationParameters
 
-    $installExitCode = Invoke-MsiExec -Arguments @(
+    $installResult = Invoke-MsiExec -Operation 'install' -Arguments @(
         '/i',
         $resolvedMsiPath,
         '/qn',
@@ -730,7 +756,7 @@ try {
         'REBOOT=ReallySuppress'
     )
     Assert-MsiOperationSucceeded `
-        -ExitCode $installExitCode `
+        -Result $installResult `
         -Operation 'MSI installation'
     $installed = $true
 
@@ -818,7 +844,7 @@ try {
             "<tampered-companion path=`"$relativePath`" />",
             [Text.UTF8Encoding]::new($false))
     }
-    $normalRepairExitCode = Invoke-MsiExec -Arguments @(
+    $normalRepairResult = Invoke-MsiExec -Operation 'ordinary-repair' -Arguments @(
         '/fomus',
         $productCode,
         '/qn',
@@ -826,7 +852,7 @@ try {
         'REBOOT=ReallySuppress'
     )
     Assert-MsiOperationSucceeded `
-        -ExitCode $normalRepairExitCode `
+        -Result $normalRepairResult `
         -Operation 'MSI ordinary repair'
     foreach ($relativePath in $ordinaryRepairRelativePaths) {
         $expectedCompanion = $expectedFiles[$relativePath]
@@ -858,7 +884,7 @@ try {
     $unsafeAcl.AddAccessRule($unsafeRule)
     Set-Acl -LiteralPath $installRoot -AclObject $unsafeAcl
 
-    $repairExitCode = Invoke-MsiExec -Arguments @(
+    $repairResult = Invoke-MsiExec -Operation 'force-all-repair' -Arguments @(
         '/fa',
         $resolvedMsiPath,
         '/qn',
@@ -866,7 +892,7 @@ try {
         'REBOOT=ReallySuppress'
     )
     Assert-MsiOperationSucceeded `
-        -ExitCode $repairExitCode `
+        -Result $repairResult `
         -Operation 'MSI force-all repair'
 
     Assert-ProtectedEntry -Path $installRoot -RequireExactApplicationDirectoryAcl
@@ -909,7 +935,7 @@ finally {
     else {
         try {
             if ($installed -or (Get-ProductState -ProductCode $productCode) -ne -1) {
-                $uninstallExitCode = Invoke-MsiExec -Arguments @(
+                $uninstallResult = Invoke-MsiExec -Operation 'uninstall' -Arguments @(
                     '/x',
                     $productCode,
                     '/qn',
@@ -917,7 +943,7 @@ finally {
                     'REBOOT=ReallySuppress'
                 )
                 Assert-MsiOperationSucceeded `
-                    -ExitCode $uninstallExitCode `
+                    -Result $uninstallResult `
                     -Operation 'MSI uninstall'
             }
         }

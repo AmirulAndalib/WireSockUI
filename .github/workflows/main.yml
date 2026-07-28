@@ -226,9 +226,6 @@ jobs:
             -LauncherPath $bootstrap `
             -ExpectedPlatform $env:BUILD_PLATFORM `
             -ExpectedVersion $env:WIRESOCKUI_VERSION
-          if ($LASTEXITCODE -ne 0) {
-            throw 'Unsigned native bootstrap hardening validation failed.'
-          }
           Import-Module ./scripts/NativeBootstrap.Validation.psm1 -Force
           Assert-ManagedAssemblyPlatform `
             -Path $managedAssembly `
@@ -351,18 +348,12 @@ jobs:
               -ExpectedPlatform $architecture `
               -ExpectedVersion $env:WIRESOCKUI_VERSION `
               -RequireSignature
-            if ($LASTEXITCODE -ne 0) {
-              throw "Downloaded native bootstrap hardening validation failed for '$bootstrap'."
-            }
             $bootstraps += $bootstrap
           }
           ./scripts/Test-ReleaseSignature.ps1 `
             -FilePath $bootstraps `
             -ExpectedSignerSubject $env:EXPECTED_SIGNER_SUBJECT `
             -ExpectedTimestampSubject $env:EXPECTED_TIMESTAMP_SUBJECT
-          if ($LASTEXITCODE -ne 0) {
-            throw 'Downloaded bootstrap release-signature policy validation failed.'
-          }
 
       - name: Install pinned SBOM tool
         shell: pwsh
@@ -395,9 +386,6 @@ jobs:
             -FilePath $msis.FullName `
             -ExpectedSignerSubject $env:EXPECTED_SIGNER_SUBJECT `
             -ExpectedTimestampSubject $env:EXPECTED_TIMESTAMP_SUBJECT
-          if ($LASTEXITCODE -ne 0) {
-            throw 'Downloaded MSI release-signature policy validation failed.'
-          }
           foreach ($msi in $msis) {
             if ($msi.Name -notmatch '\AWireSockUI-(?<version>[0-9]+\.[0-9]+\.[0-9]+)-win-(?<architecture>x86|x64|arm64)-(?<flavor>no-uwp|uwp)\.msi\z' -or
                 $Matches.version -cne $env:WIRESOCKUI_VERSION) {
@@ -413,9 +401,6 @@ jobs:
               -ExpectedFlavor $flavor `
               -ValidationMetadataPath $metadata `
               -RequireSignature
-            if ($LASTEXITCODE -ne 0) {
-              throw "Release MSI validation failed for '$($msi.Name)'."
-            }
             Copy-Item -LiteralPath $msi.FullName -Destination $output.FullName
             Copy-Item -LiteralPath $metadata -Destination $output.FullName
           }
@@ -498,9 +483,6 @@ jobs:
               -ExpectedVersion $env:WIRESOCKUI_VERSION `
               -NuGetLockFilePath WireSockUI/packages.lock.json `
               -NuGetTargetFramework '.NETFramework,Version=v4.7.2'
-            if ($LASTEXITCODE -ne 0) {
-              throw "SPDX-to-MSI fidelity validation failed for '$assetName'."
-            }
             $sbomDocument = Get-Content -LiteralPath $manifests[0].FullName -Raw -Encoding UTF8 |
               ConvertFrom-Json
             if (-not $seenSbomNamespaces.Add([string]$sbomDocument.documentNamespace)) {

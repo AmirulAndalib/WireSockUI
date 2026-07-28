@@ -180,6 +180,7 @@ namespace WireSockUI.Tests
                 { "Program rejects an untrusted WireSock crash handler", ProgramRejectsUntrustedWireSockCrashHandler },
                 { "Program distinguishes read-only and writable ACLs", ProgramDistinguishesReadOnlyAndWritableAcls },
                 { "Program restricts trusted owner SIDs", ProgramRestrictsTrustedOwnerSids },
+                { "Program checks elevation without token-access failures", ProgramChecksElevationWithoutTokenAccessFailures },
                 { "Program rejects over-the-shoulder elevation identities", ProgramRejectsOverTheShoulderElevationIdentities },
                 { "Program rejects replaceable trusted path ancestors", ProgramRejectsReplaceableTrustedPathAncestors },
                 { "Program rejects protected directory creation below writable parents", ProgramRejectsProtectedDirectoryCreationBelowWritableParents },
@@ -2184,6 +2185,19 @@ namespace WireSockUI.Tests
                     new SecurityIdentifier(
                         "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464")
                 }), "Expected the exact TrustedInstaller SID to remain trusted.");
+#if DEBUG
+            if (WireSockUI.Program.IsProcessElevated(out _))
+            {
+                using (var identity = WindowsIdentity.GetCurrent(TokenAccessLevels.Query))
+                {
+                    AssertTrue(
+                        (bool)isTrustedAdministrativeSid.Invoke(
+                            null,
+                            new object[] { identity.User }),
+                        "Expected a Debug build to inspect the elevated current user without a token-access failure.");
+                }
+            }
+#endif
         }
 
         private static void ProgramRejectsOverTheShoulderElevationIdentities()
@@ -2211,6 +2225,24 @@ namespace WireSockUI.Tests
             AssertTrue(
                 mismatchDiagnostic?.IndexOf("different account", StringComparison.OrdinalIgnoreCase) >= 0,
                 "Expected an actionable over-the-shoulder elevation diagnostic.");
+        }
+
+        private static void ProgramChecksElevationWithoutTokenAccessFailures()
+        {
+            var elevated = WireSockUI.Program.IsProcessElevated(out var diagnostic);
+            if (elevated)
+            {
+                AssertTrue(
+                    string.IsNullOrEmpty(diagnostic),
+                    "Expected an elevated token to have no diagnostic.");
+                return;
+            }
+
+            AssertTrue(
+                diagnostic?.IndexOf(
+                    "not running with an elevated administrator token",
+                    StringComparison.OrdinalIgnoreCase) >= 0,
+                $"Expected a normal non-elevated result, not a token-access failure: {diagnostic}");
         }
 
         private static void GlobalFailsClosedOnConfigurationDirectoryReparsePoints()

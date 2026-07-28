@@ -401,7 +401,8 @@ namespace WireSockUI
             diagnostic = null;
             try
             {
-                using (var identity = WindowsIdentity.GetCurrent(TokenAccessLevels.Query))
+                using (var identity = WindowsIdentity.GetCurrent(
+                           TokenAccessLevels.Query | TokenAccessLevels.Duplicate))
                 {
                     if (identity.User == null)
                     {
@@ -1774,7 +1775,8 @@ namespace WireSockUI
 
             try
             {
-                using (var identity = WindowsIdentity.GetCurrent(TokenAccessLevels.Query))
+                using (var identity = WindowsIdentity.GetCurrent(
+                           TokenAccessLevels.Query | TokenAccessLevels.Duplicate))
                 {
                     return identity.User != null &&
                            identity.User.Equals(sid) &&

@@ -25,6 +25,9 @@ $principal = New-Object Security.Principal.WindowsPrincipal $identity
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw 'The native-host smoke test requires an already-elevated disposable Windows runner.'
 }
+$administratorsSid = New-Object Security.Principal.SecurityIdentifier(
+    'S-1-5-32-544')
+$systemSid = New-Object Security.Principal.SecurityIdentifier('S-1-5-18')
 $isDebugLauncher =
     [Diagnostics.FileVersionInfo]::GetVersionInfo($resolvedLauncher).IsDebug
 if (-not $SkipBcryptSentinel -and -not $isDebugLauncher) {
@@ -70,28 +73,55 @@ function Get-PortableExecutablePlatform {
     }
 }
 
-function Set-PrivateTestDirectoryAcl {
-    param([Parameter(Mandatory = $true)][string] $Path)
+function Set-PrivateTestPathAcl {
+    param(
+        [Parameter(Mandatory = $true)]
+        [IO.FileSystemInfo] $Entry
+    )
 
-    $security = New-Object Security.AccessControl.DirectorySecurity
-    $security.SetOwner($identity.User)
+    if (($Entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Native-host test entry '$($Entry.FullName)' is a reparse point."
+    }
+    $security = if ($Entry.PSIsContainer) {
+        New-Object Security.AccessControl.DirectorySecurity
+    }
+    else {
+        New-Object Security.AccessControl.FileSecurity
+    }
+    $security.SetOwner($administratorsSid)
     $security.SetAccessRuleProtection($true, $false)
-    $inheritance =
+    $inheritance = if ($Entry.PSIsContainer) {
         [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
         [Security.AccessControl.InheritanceFlags]::ObjectInherit
-    foreach ($sidValue in @(
-            $identity.User.Value,
-            'S-1-5-18',
-            'S-1-5-32-544')) {
+    }
+    else {
+        [Security.AccessControl.InheritanceFlags]::None
+    }
+    foreach ($sid in @($systemSid, $administratorsSid)) {
         $rule = New-Object Security.AccessControl.FileSystemAccessRule(
-            (New-Object Security.Principal.SecurityIdentifier($sidValue)),
+            $sid,
             [Security.AccessControl.FileSystemRights]::FullControl,
             $inheritance,
             [Security.AccessControl.PropagationFlags]::None,
             [Security.AccessControl.AccessControlType]::Allow)
         [void]$security.AddAccessRule($rule)
     }
-    Set-Acl -LiteralPath $Path -AclObject $security
+    Set-Acl -LiteralPath $Entry.FullName -AclObject $security
+}
+
+function Set-PrivateTestTreeAcl {
+    param([Parameter(Mandatory = $true)][string] $Root)
+
+    $resolvedRoot = [IO.Path]::GetFullPath($Root)
+    $rootEntry = Get-Item -LiteralPath $resolvedRoot -Force
+    if (-not $rootEntry.PSIsContainer) {
+        throw "Native-host test root '$resolvedRoot' is not a directory."
+    }
+
+    Set-PrivateTestPathAcl -Entry $rootEntry
+    foreach ($entry in Get-ChildItem -LiteralPath $resolvedRoot -Recurse -Force) {
+        Set-PrivateTestPathAcl -Entry $entry
+    }
 }
 
 function Initialize-VisualCppEnvironment {
@@ -186,6 +216,7 @@ function Invoke-NativeHostProbe {
     $startInfo.EnvironmentVariables['APPDOMAIN_MANAGER_TYPE'] = 'Untrusted.Manager.Type'
     $startInfo.EnvironmentVariables['DEVPATH'] = 'C:\nonexistent\devpath'
     $startInfo.EnvironmentVariables['WIRESOCKUI_DEVELOPMENT_SELF_TEST_NO_UI'] = '1'
+    $startInfo.EnvironmentVariables['WIRESOCKUI_NATIVE_SELF_TEST_DIAGNOSTICS'] = '1'
     if (-not [string]::IsNullOrWhiteSpace($BcryptSentinelMarker)) {
         $startInfo.EnvironmentVariables['WIRESOCKUI_BCRYPT_SENTINEL'] =
             $BcryptSentinelMarker
@@ -274,17 +305,60 @@ if ($SkipBcryptSentinel) {
 }
 
 if (-not $SkipBcryptSentinel) {
+    if ($null -eq ('WireSockUI.NativeHostTests.NativeMethods' -as [type])) {
+        Add-Type -Namespace WireSockUI.NativeHostTests -Name NativeMethods `
+            -MemberDefinition @'
+            [System.Runtime.InteropServices.DllImport(
+                "kernel32.dll",
+                CharSet = System.Runtime.InteropServices.CharSet.Unicode,
+                SetLastError = true)]
+            public static extern bool GetVolumePathNameW(
+                string fileName,
+                System.Text.StringBuilder volumePathName,
+                int bufferLength);
+
+            [System.Runtime.InteropServices.DllImport(
+                "kernel32.dll",
+                CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+            public static extern uint GetDriveTypeW(string rootPathName);
+'@
+    }
+
     $platform = Get-PortableExecutablePlatform -Path $resolvedLauncher
     $repositoryRoot = Split-Path -Parent $PSScriptRoot
     $buildBootstrap = Join-Path $PSScriptRoot 'Build-NativeBootstrap.ps1'
     $sourceDirectory = Split-Path -Parent $resolvedLauncher
-    $testRoot = Join-Path ([IO.Path]::GetTempPath()) (
+    $testBaseDirectory = [Environment]::GetFolderPath(
+        [Environment+SpecialFolder]::ProgramFiles)
+    if ([string]::IsNullOrWhiteSpace($testBaseDirectory) -or
+        -not [IO.Path]::IsPathRooted($testBaseDirectory)) {
+        throw 'The native-host smoke test could not resolve Program Files.'
+    }
+    $testBaseDirectory = [IO.Path]::GetFullPath($testBaseDirectory)
+    if (-not [IO.Directory]::Exists($testBaseDirectory)) {
+        throw 'The native-host smoke test requires an existing Program Files directory.'
+    }
+    $testBaseEntry = Get-Item -LiteralPath $testBaseDirectory -Force
+    if (-not $testBaseEntry.PSIsContainer -or
+        ($testBaseEntry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'The native-host smoke test requires an ordinary Program Files directory.'
+    }
+    $volumePath = [Text.StringBuilder]::new(32768)
+    if (-not [WireSockUI.NativeHostTests.NativeMethods]::GetVolumePathNameW(
+            $testBaseDirectory,
+            $volumePath,
+            $volumePath.Capacity) -or
+        [WireSockUI.NativeHostTests.NativeMethods]::GetDriveTypeW(
+            $volumePath.ToString()) -ne 3) {
+        throw 'The native-host smoke test requires Program Files on a local fixed drive.'
+    }
+    $testRoot = Join-Path $testBaseDirectory (
         'WireSockUI.NativeHost.' + [Guid]::NewGuid().ToString('N'))
     $payloadDirectory = Join-Path $testRoot 'payload'
     $buildDirectory = Join-Path $testRoot 'build'
     try {
         [void][IO.Directory]::CreateDirectory($testRoot)
-        Set-PrivateTestDirectoryAcl -Path $testRoot
+        Set-PrivateTestTreeAcl -Root $testRoot
         [void][IO.Directory]::CreateDirectory($payloadDirectory)
         [void][IO.Directory]::CreateDirectory($buildDirectory)
 
@@ -308,6 +382,7 @@ if (-not $SkipBcryptSentinel) {
         Copy-Item `
             -LiteralPath $resolvedLauncher `
             -Destination $testLauncherPath
+        Set-PrivateTestTreeAcl -Root $testRoot
         Invoke-NativeHostProbe -Path $testLauncherPath
 
         Initialize-VisualCppEnvironment -Platform $platform
@@ -465,6 +540,7 @@ extern "C" LONG WINAPI SentinelFinishHash(void*, unsigned char*, ULONG, ULONG)
             throw "Sentinel-bound native launcher build failed with exit code $LASTEXITCODE."
         }
 
+        Set-PrivateTestTreeAcl -Root $testRoot
         $sentinelMarker = Join-Path $buildDirectory 'bcrypt-loaded.txt'
         Invoke-NativeHostProbe `
             -Path $testLauncherPath `
@@ -578,11 +654,11 @@ extern "C" LONG WINAPI SentinelFinishHash(void*, unsigned char*, ULONG, ULONG)
             }
             else {
                 $resolvedTestRoot = [IO.Path]::GetFullPath($testRoot)
-                $normalizedTempRoot = [IO.Path]::GetFullPath(
-                    [IO.Path]::GetTempPath()).TrimEnd('\', '/') + '\'
+                $normalizedTestBase = [IO.Path]::GetFullPath(
+                    $testBaseDirectory).TrimEnd('\', '/') + '\'
                 $testRootEntry = Get-Item -LiteralPath $resolvedTestRoot -Force
                 if (-not $resolvedTestRoot.StartsWith(
-                        $normalizedTempRoot,
+                        $normalizedTestBase,
                         [StringComparison]::OrdinalIgnoreCase) -or
                     -not (Split-Path -Leaf $resolvedTestRoot).StartsWith(
                         'WireSockUI.NativeHost.',

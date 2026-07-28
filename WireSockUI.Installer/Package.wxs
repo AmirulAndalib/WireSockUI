@@ -38,8 +38,25 @@
           Type="raw"
           Bitness="always32" />
     </Property>
+    <!--
+      VersionNT and WindowsBuild inherit the compatibility view of msiexec.exe.
+      Current Windows Installer binaries can therefore report Windows 8.1 even
+      on Windows 10/11 and Windows Server 2025. Read the real OS build
+      number instead; 10240 is the first released Windows 10 build. The
+      documented 32-bit registry view also keeps x86 packages compatible with
+      supported 32-bit Windows installations.
+    -->
+    <Property Id="WINDOWSCURRENTBUILD" Secure="yes">
+      <RegistrySearch
+          Id="WindowsCurrentBuildSearch"
+          Root="HKLM"
+          Key="SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+          Name="CurrentBuildNumber"
+          Type="raw"
+          Bitness="always32" />
+    </Property>
     <Launch
-        Condition="Installed OR VersionNT &gt;= 1000"
+        Condition="Installed OR WINDOWSCURRENTBUILD &gt;= 10240"
         Message="WireSock UI requires Windows 10 or later." />
     <?if $(var.ProductArchitecture) = arm64 ?>
       <!-- .NET Framework did not gain native ARM64 CLR support until 4.8.1. -->

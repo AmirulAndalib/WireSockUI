@@ -187,6 +187,14 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Setup dotnet
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          global-json-file: global.json
+
+      - name: Restore locked installer toolchain
+        run: dotnet restore WireSockUI.Installer/WireSockUI.Installer.wixproj --locked-mode
+
       - name: Download architecture-matched unsigned MSI
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -318,7 +326,6 @@ jobs:
             -OutputDirectory $output `
             -AllowUnsignedPayload `
             -NoRestore
-          if ($LASTEXITCODE -ne 0) { throw 'MSI build or validation failed.' }
 
       - name: Upload MSI for architecture-isolation validation
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -353,13 +360,8 @@ jobs:
             throw "Expected six unsigned MSI packages, found $($msis.Count)."
           }
           ./scripts/Test-MsiArchitectureIsolation.ps1 -MsiPath $msis.FullName
-          if ($LASTEXITCODE -ne 0) {
-            throw 'MSI architecture/component-isolation validation failed.'
-          }
           ./scripts/Test-MsiArchitectureIsolation.Tests.ps1 -MsiPath $msis.FullName
-          if ($LASTEXITCODE -ne 0) {
-            throw 'Adversarial MSI architecture/component-identity fixtures failed.'
-          }
+          ./scripts/MsiTest.Diagnostics.Tests.ps1
 
   msi-transition-smoke:
     needs: publish
@@ -437,7 +439,6 @@ jobs:
             -OutputDirectory $output `
             -AllowUnsignedPayload `
             -NoRestore
-          if ($LASTEXITCODE -ne 0) { throw 'Current no-UWP MSI build failed.' }
 
           ./scripts/Build-Msi.ps1 `
             -Platform x64 `
@@ -447,7 +448,6 @@ jobs:
             -OutputDirectory $output `
             -AllowUnsignedPayload `
             -NoRestore
-          if ($LASTEXITCODE -ne 0) { throw 'Current UWP MSI build failed.' }
 
       - name: Exercise MSI transitions and rollback
         shell: pwsh
@@ -463,4 +463,3 @@ jobs:
             -BaselineX86NoUwpValidationMetadataPath './baseline-x86-no-uwp/WireSockUI-1.0.0-win-x86-no-uwp.msi.validation.json' `
             -EphemeralMachine `
             -AllowUnsignedPayload
-          if ($LASTEXITCODE -ne 0) { throw 'MSI transition smoke test failed.' }

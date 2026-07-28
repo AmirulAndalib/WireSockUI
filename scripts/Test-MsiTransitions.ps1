@@ -32,6 +32,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+Import-Module (Join-Path $PSScriptRoot 'MsiTest.Diagnostics.psm1') -Force
 
 $upgradeCode = '{5C1DDAE5-6681-41BF-B153-AB2952AA6DF1}'
 $applicationDirectoryName = 'WireSock Foundation WireSock UI'
@@ -735,7 +736,7 @@ function Invoke-MsiExec {
     $safeOperation = $Operation -replace '[^A-Za-z0-9_.-]', '-'
     $logPath = Join-Path $testRoot (
         '{0:D2}-{1}.log' -f $script:operationIndex, $safeOperation)
-    $completeArguments = @($Arguments) + @('/l*v', $logPath)
+    $completeArguments = @($Arguments) + @('/l*vx!', $logPath)
     $startInfo = New-Object Diagnostics.ProcessStartInfo
     $startInfo.FileName = $trustedMsiExecPath
     $startInfo.Arguments = (
@@ -761,12 +762,22 @@ function Invoke-MsiExec {
             if (-not $clientExited -or -not $installerIdle) {
                 $script:installerStateSafeForCleanup = $false
             }
-            throw "Windows Installer operation '$Operation' timed out; cleanup will be skipped unless the client exited and the execute mutex became idle. Log: $logPath"
+            $diagnostic = Get-BoundedMsiLogDiagnostic -Path $logPath
+            throw (
+                "Windows Installer operation '$Operation' timed out; cleanup " +
+                'will be skipped unless the client exited and the execute ' +
+                "mutex became idle. Log: $logPath$([Environment]::NewLine)" +
+                $diagnostic)
         }
         $exitCode = $process.ExitCode
         if ($exitCode -in @(1641, 3010)) {
             $script:installerStateSafeForCleanup = $false
-            throw "Windows Installer operation '$Operation' initiated or requested a reboot (exit code $exitCode). Refusing further installer operations or filesystem cleanup. Log: $logPath"
+            $diagnostic = Get-BoundedMsiLogDiagnostic -Path $logPath
+            throw (
+                "Windows Installer operation '$Operation' initiated or " +
+                "requested a reboot (exit code $exitCode). Refusing further " +
+                "installer operations or filesystem cleanup. Log: $logPath" +
+                "$([Environment]::NewLine)$diagnostic")
         }
         return [pscustomobject]@{
             ExitCode = $exitCode
@@ -792,7 +803,10 @@ function Install-Package {
         'REBOOT=ReallySuppress'
     )
     if ($result.ExitCode -ne 0) {
-        throw "$Operation failed with exit code $($result.ExitCode). Log: $($result.LogPath)"
+        $diagnostic = Get-BoundedMsiLogDiagnostic -Path $result.LogPath
+        throw (
+            "$Operation failed with exit code $($result.ExitCode). Log: " +
+            "$($result.LogPath)$([Environment]::NewLine)$diagnostic")
     }
 }
 
@@ -810,7 +824,10 @@ function Uninstall-Package {
         'REBOOT=ReallySuppress'
     )
     if ($result.ExitCode -notin @(0, 1605)) {
-        throw "$Operation failed with exit code $($result.ExitCode). Log: $($result.LogPath)"
+        $diagnostic = Get-BoundedMsiLogDiagnostic -Path $result.LogPath
+        throw (
+            "$Operation failed with exit code $($result.ExitCode). Log: " +
+            "$($result.LogPath)$([Environment]::NewLine)$diagnostic")
     }
 }
 
@@ -830,7 +847,11 @@ function Invoke-ExpectedInstallFailure {
         'REBOOT=ReallySuppress'
     )
     if ($result.ExitCode -notin $ExpectedExitCodes) {
-        throw "$Operation returned exit code $($result.ExitCode); expected $($ExpectedExitCodes -join ', '). Log: $($result.LogPath)"
+        $diagnostic = Get-BoundedMsiLogDiagnostic -Path $result.LogPath
+        throw (
+            "$Operation returned exit code $($result.ExitCode); expected " +
+            "$($ExpectedExitCodes -join ', '). Log: $($result.LogPath)" +
+            "$([Environment]::NewLine)$diagnostic")
     }
     $logEntry = Get-Item -LiteralPath $result.LogPath -Force
     if ($logEntry.Length -gt 32MB) {
@@ -839,7 +860,10 @@ function Invoke-ExpectedInstallFailure {
     $logText = Get-Content -LiteralPath $result.LogPath -Raw
     foreach ($pattern in $RequiredLogPatterns) {
         if ($logText -notmatch [regex]::Escape($pattern)) {
-            throw "$Operation log does not contain required evidence '$pattern'. Log: $($result.LogPath)"
+            $diagnostic = Get-BoundedMsiLogDiagnostic -Path $result.LogPath
+            throw (
+                "$Operation log does not contain required evidence '$pattern'. " +
+                "Log: $($result.LogPath)$([Environment]::NewLine)$diagnostic")
         }
     }
     Write-Host "$Operation failed as expected with exit code $($result.ExitCode)."

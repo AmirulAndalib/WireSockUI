@@ -42,6 +42,99 @@ function Invoke-ComMethod {
         $Arguments)
 }
 
+function Set-ComProperty {
+    param([object]$Instance, [string]$Name, [object[]]$Arguments)
+
+    $Instance.GetType().InvokeMember(
+        $Name,
+        [Reflection.BindingFlags]::SetProperty,
+        $null,
+        $Instance,
+        $Arguments) | Out-Null
+}
+
+function Assert-WindowsBuildLaunchConditionSemantics {
+    param([Parameter(Mandatory = $true)][string]$Package)
+
+    $installer = $null
+    $session = $null
+    try {
+        $installer = New-Object -ComObject WindowsInstaller.Installer
+        # INSTALLUILEVEL_NONE prevents a regressed LaunchCondition from
+        # displaying a modal message box and hanging a headless CI runner.
+        Set-ComProperty $installer UILevel @([int]2)
+        # Flag 1 is MSIOPENPACKAGEFLAGS_IGNOREMACHINESTATE. This creates a
+        # read-only test session; it never runs an installation sequence.
+        $session = Invoke-ComMethod `
+            $installer `
+            OpenPackage `
+            @([string]$Package, [int]1)
+        Set-ComProperty $session Property @('Installed', '')
+        Set-ComProperty $session Property @('VersionNT', '603')
+        Set-ComProperty `
+            $session `
+            Property `
+            @('NETFRAMEWORK472RELEASE', '#533325')
+
+        $condition = 'Installed OR WINDOWSCURRENTBUILD >= 10240'
+        foreach ($testCase in @(
+                [pscustomobject]@{ Build = ''; Expected = 0 }
+                [pscustomobject]@{ Build = '9600'; Expected = 0 }
+                [pscustomobject]@{ Build = '10240'; Expected = 1 }
+                [pscustomobject]@{ Build = '26100'; Expected = 1 })) {
+            Set-ComProperty `
+                $session `
+                Property `
+                @('WINDOWSCURRENTBUILD', $testCase.Build)
+            $evaluation = [int](
+                Invoke-ComMethod `
+                    $session `
+                    EvaluateCondition `
+                    @([string]$condition))
+            if ($evaluation -ne $testCase.Expected) {
+                throw (
+                    "Windows build launch condition evaluated build " +
+                    "'$($testCase.Build)' as $evaluation; expected " +
+                    "$($testCase.Expected).")
+            }
+        }
+
+        # Server 2025 currently exposes VersionNT=603 to msiexec.exe. A real
+        # build 26100 must still pass the package's complete LaunchConditions
+        # action when all unrelated requirements are satisfied.
+        Set-ComProperty $session Property @('WINDOWSCURRENTBUILD', '9600')
+        $rejectedActionStatus = [int](
+            Invoke-ComMethod $session DoAction @('LaunchConditions'))
+        if ($rejectedActionStatus -ne 3) {
+            throw (
+                "An unsupported Windows build returned MSI action status " +
+                "$rejectedActionStatus; expected 3.")
+        }
+
+        Set-ComProperty $session Property @('WINDOWSCURRENTBUILD', '26100')
+        $actionStatus = [int](
+            Invoke-ComMethod $session DoAction @('LaunchConditions'))
+        if ($actionStatus -ne 1) {
+            throw "LaunchConditions returned MSI action status $actionStatus; expected 1."
+        }
+    }
+    catch {
+        throw (
+            'The MSI Windows-build launch condition does not tolerate the ' +
+            "modern msiexec VersionNT compatibility view: $($_.Exception.Message)")
+    }
+    finally {
+        if ($null -ne $session) {
+            [Runtime.InteropServices.Marshal]::FinalReleaseComObject(
+                $session) | Out-Null
+        }
+        if ($null -ne $installer) {
+            [Runtime.InteropServices.Marshal]::FinalReleaseComObject(
+                $installer) | Out-Null
+        }
+    }
+}
+
 function New-IdentityMapCopy {
     return Get-Content `
         -LiteralPath $resolvedIdentityMapPath `
@@ -148,7 +241,7 @@ function Invoke-MsiUpdate {
     param(
         [string]$SourcePath,
         [string]$Name,
-        [string]$Sql
+        [string[]]$Sql
     )
 
     $destinationPath = Join-Path $testRoot "$Name.msi"
@@ -168,8 +261,25 @@ function Invoke-MsiUpdate {
             throw "Could not open mutated MSI '$destinationPath': $($_.Exception.Message)"
         }
         try {
-            $view = Invoke-ComMethod $database OpenView @([string]$Sql)
-            Invoke-ComMethod $view Execute @() | Out-Null
+            foreach ($statement in $Sql) {
+                $view = Invoke-ComMethod `
+                    $database `
+                    OpenView `
+                    @([string]$statement)
+                try {
+                    Invoke-ComMethod $view Execute @() | Out-Null
+                }
+                finally {
+                    try {
+                        Invoke-ComMethod $view Close @() | Out-Null
+                    }
+                    finally {
+                        [Runtime.InteropServices.Marshal]::FinalReleaseComObject(
+                            $view) | Out-Null
+                        $view = $null
+                    }
+                }
+            }
             Invoke-ComMethod $database Commit @() | Out-Null
         }
         catch {
@@ -439,6 +549,8 @@ try {
     }
     $x86NoUwpVersion = [string]$Matches.version
 
+    Assert-WindowsBuildLaunchConditionSemantics -Package $x86NoUwpPath
+
     $always64FrameworkSearchMsi = Invoke-MsiUpdate `
         -SourcePath $x86NoUwpPath `
         -Name 'always64-framework-search' `
@@ -453,6 +565,43 @@ try {
         -ExpectedFlavor 'no-uwp' `
         -ExpectedVersion $x86NoUwpVersion `
         -ExpectedMessage 'documented 32-bit .NET Framework release key'
+
+    $always64WindowsBuildSearchMsi = Invoke-MsiUpdate `
+        -SourcePath $x86NoUwpPath `
+        -Name 'always64-windows-build-search' `
+        -Sql (
+            'UPDATE `RegLocator` SET `Type` = 18 WHERE `Signature_` = ' +
+            '''WindowsCurrentBuildSearch''')
+    Assert-PackageValidatorRejects `
+        -Description 'An x86 package with a 64-bit-only Windows build registry locator' `
+        -Package $always64WindowsBuildSearchMsi `
+        -ValidationMetadataPath ($x86NoUwpPath + '.validation.json') `
+        -ExpectedArchitecture 'x86' `
+        -ExpectedFlavor 'no-uwp' `
+        -ExpectedVersion $x86NoUwpVersion `
+        -ExpectedMessage 'documented 32-bit-compatible Windows build number key'
+
+    $versionNtWindowsGateMsi = Invoke-MsiUpdate `
+        -SourcePath $x86NoUwpPath `
+        -Name 'version-nt-windows-gate' `
+        -Sql @(
+            (
+                'DELETE FROM `LaunchCondition` WHERE `Condition` = ' +
+                '''Installed OR WINDOWSCURRENTBUILD >= 10240'''
+            ),
+            (
+                'INSERT INTO `LaunchCondition` (`Condition`, `Description`) ' +
+                'VALUES (''Installed OR VersionNT >= 1000'', ' +
+                '''WireSock UI requires Windows 10 or later.'')'
+            ))
+    Assert-PackageValidatorRejects `
+        -Description 'A compatibility-lied VersionNT Windows launch condition' `
+        -Package $versionNtWindowsGateMsi `
+        -ValidationMetadataPath ($x86NoUwpPath + '.validation.json') `
+        -ExpectedArchitecture 'x86' `
+        -ExpectedFlavor 'no-uwp' `
+        -ExpectedVersion $x86NoUwpVersion `
+        -ExpectedMessage 'MSI launch conditions contain unexpected rows'
 
     $keyPathDriftMsi = Invoke-MsiUpdate `
         -SourcePath $x64NoUwpPath `

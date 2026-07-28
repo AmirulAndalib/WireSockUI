@@ -359,6 +359,25 @@ namespace
             nullptr);
     }
 
+    bool IsNativeHostSelfTestDiagnosticsEnabled()
+    {
+        wchar_t enabled[2] = {};
+        return GetEnvironmentVariableW(
+                   L"WIRESOCKUI_NATIVE_SELF_TEST_DIAGNOSTICS",
+                   enabled,
+                   static_cast<DWORD>(_countof(enabled))) == 1 &&
+               enabled[0] == L'1';
+    }
+
+    void WriteNativeHostSelfTestPhase(
+        bool diagnosticsEnabled,
+        const wchar_t* phase)
+    {
+        if (diagnosticsEnabled)
+            WriteNativeHostSelfTestDiagnostic(
+                std::wstring(L"phase: ") + phase);
+    }
+
     void ShowStartupError(
         const std::wstring& diagnostic,
         bool nativeHostSelfTestRequested)
@@ -1692,6 +1711,7 @@ namespace
     bool ExecuteManagedApplication(
         const std::wstring& applicationDirectory,
         const std::wstring& managedArgument,
+        bool nativeHostSelfTestDiagnosticsEnabled,
         DWORD& exitCode,
         std::wstring& diagnostic)
     {
@@ -1717,6 +1737,9 @@ namespace
                 WindowsErrorMessage(GetLastError());
             return false;
         }
+        WriteNativeHostSelfTestPhase(
+            nativeHostSelfTestDiagnosticsEnabled,
+            L"system CLR host loaded");
 
         using ClrCreateInstanceFunction =
             HRESULT(STDAPICALLTYPE*)(REFCLSID, REFIID, LPVOID*);
@@ -1790,15 +1813,24 @@ namespace
                 HResultMessage(result);
             return false;
         }
+        WriteNativeHostSelfTestPhase(
+            nativeHostSelfTestDiagnosticsEnabled,
+            L"CLR started");
 
         const std::wstring managedAssemblyPath =
             CombinePath(applicationDirectory, ManagedAssemblyName);
+        WriteNativeHostSelfTestPhase(
+            nativeHostSelfTestDiagnosticsEnabled,
+            L"managed entry point invoking");
         result = runtimeHost.get()->ExecuteInDefaultAppDomain(
             managedAssemblyPath.c_str(),
             ManagedTypeName,
             ManagedMethodName,
             managedArgument.c_str(),
             &exitCode);
+        WriteNativeHostSelfTestPhase(
+            nativeHostSelfTestDiagnosticsEnabled,
+            L"managed entry point returned");
         if (FAILED(result))
         {
             diagnostic =
@@ -1817,6 +1849,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR commandLine, int)
     {
         nativeHostSelfTestRequested =
             IsNativeHostSelfTestCommandLine(commandLine);
+        const bool nativeHostSelfTestDiagnosticsEnabled =
+            nativeHostSelfTestRequested &&
+            IsNativeHostSelfTestDiagnosticsEnabled();
+        WriteNativeHostSelfTestPhase(
+            nativeHostSelfTestDiagnosticsEnabled,
+            L"command accepted");
         const std::wstring managedArgument =
             nativeHostSelfTestRequested
                 ? ManagedNativeHostSelfTestToken
@@ -1831,6 +1869,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR commandLine, int)
                 nativeHostSelfTestRequested);
             return 1;
         }
+        WriteNativeHostSelfTestPhase(
+            nativeHostSelfTestDiagnosticsEnabled,
+            L"DLL search policy restricted");
         if (!IsCurrentProcessAdministrator())
         {
             ShowStartupError(
@@ -1839,6 +1880,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR commandLine, int)
                 nativeHostSelfTestRequested);
             return 1;
         }
+        WriteNativeHostSelfTestPhase(
+            nativeHostSelfTestDiagnosticsEnabled,
+            L"administrator token verified");
 
         std::wstring diagnostic;
         if (!HasRequiredNetFramework(diagnostic))
@@ -1846,6 +1890,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR commandLine, int)
             ShowStartupError(diagnostic, nativeHostSelfTestRequested);
             return 1;
         }
+        WriteNativeHostSelfTestPhase(
+            nativeHostSelfTestDiagnosticsEnabled,
+            L".NET Framework prerequisite verified");
 
         std::vector<wchar_t> moduleBuffer(32768);
         const DWORD moduleLength = GetModuleFileNameW(
@@ -1879,6 +1926,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR commandLine, int)
                 ? PayloadValidationFailureExitCode
                 : 1;
         }
+        WriteNativeHostSelfTestPhase(
+            nativeHostSelfTestDiagnosticsEnabled,
+            L"payload manifest parsed");
 
         std::vector<Handle> heldDirectories;
         std::vector<Handle> heldFiles;
@@ -1895,12 +1945,18 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR commandLine, int)
                 ? PayloadValidationFailureExitCode
                 : 1;
         }
+        WriteNativeHostSelfTestPhase(
+            nativeHostSelfTestDiagnosticsEnabled,
+            L"payload validated and locked");
 
         if (!SanitizeRuntimeEnvironment(diagnostic))
         {
             ShowStartupError(diagnostic, nativeHostSelfTestRequested);
             return 1;
         }
+        WriteNativeHostSelfTestPhase(
+            nativeHostSelfTestDiagnosticsEnabled,
+            L"runtime environment sanitized");
         if (SetCurrentDirectoryW(applicationDirectory.c_str()) == FALSE)
         {
             ShowStartupError(
@@ -1909,6 +1965,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR commandLine, int)
                 nativeHostSelfTestRequested);
             return 1;
         }
+        WriteNativeHostSelfTestPhase(
+            nativeHostSelfTestDiagnosticsEnabled,
+            L"validated working directory selected");
 
         const HRESULT comResult =
             CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -1920,10 +1979,17 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR commandLine, int)
                 nativeHostSelfTestRequested);
             return 1;
         }
+        WriteNativeHostSelfTestPhase(
+            nativeHostSelfTestDiagnosticsEnabled,
+            L"UI apartment initialized");
 
         DWORD exitCode = 1;
         const bool executed = ExecuteManagedApplication(
-            applicationDirectory, managedArgument, exitCode, diagnostic);
+            applicationDirectory,
+            managedArgument,
+            nativeHostSelfTestDiagnosticsEnabled,
+            exitCode,
+            diagnostic);
         CoUninitialize();
         if (!executed)
         {
