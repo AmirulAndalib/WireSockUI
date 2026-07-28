@@ -23,6 +23,18 @@ function Get-SddlFileSystemRights {
     return $rules[0].FileSystemRights
 }
 
+function New-DirectorySecurityFromSddl {
+    param([Parameter(Mandatory = $true)][string]$Sddl)
+
+    $rawDescriptor =
+        [Security.AccessControl.RawSecurityDescriptor]::new($Sddl)
+    $binaryDescriptor = [byte[]]::new($rawDescriptor.BinaryLength)
+    $rawDescriptor.GetBinaryForm($binaryDescriptor, 0)
+    $security = [Security.AccessControl.DirectorySecurity]::new()
+    $security.SetSecurityDescriptorBinaryForm($binaryDescriptor)
+    return $security
+}
+
 foreach ($rights in @(
         [Security.AccessControl.FileSystemRights]::Read,
         [Security.AccessControl.FileSystemRights]::ReadAndExecute,
@@ -62,6 +74,34 @@ foreach ($sddlRights in @('GW', 'GA')) {
     if (-not (Test-MsiWriteCapableFileSystemRights -Rights $rights)) {
         throw "Mutation-capable SDDL rights '$sddlRights' were classified as read-only."
     }
+}
+
+$deleteOnlyRights =
+    [Security.AccessControl.FileSystemRights]::Delete -bor
+    [Security.AccessControl.FileSystemRights]::
+        DeleteSubdirectoriesAndFiles
+if (Test-MsiReplacementCapableFileSystemRights -Rights $deleteOnlyRights) {
+    throw 'Delete-only filesystem rights were classified as replacement-capable.'
+}
+foreach ($rights in @(
+        [Security.AccessControl.FileSystemRights]::Write,
+        [Security.AccessControl.FileSystemRights]::ChangePermissions,
+        [Security.AccessControl.FileSystemRights]::TakeOwnership,
+        [Security.AccessControl.FileSystemRights]::FullControl)) {
+    if (-not (Test-MsiReplacementCapableFileSystemRights -Rights $rights)) {
+        throw "Mutation-capable filesystem rights '$rights' were classified as non-replacing."
+    }
+}
+
+$nullDaclSecurity = New-DirectorySecurityFromSddl `
+    -Sddl 'O:SYG:SYD:NO_ACCESS_CONTROL'
+if (Test-MsiSecurityDescriptorHasNonNullDacl -Security $nullDaclSecurity) {
+    throw 'A NULL filesystem DACL was accepted as protected.'
+}
+$emptyDaclSecurity = New-DirectorySecurityFromSddl -Sddl 'O:SYG:SYD:'
+if (-not (Test-MsiSecurityDescriptorHasNonNullDacl `
+        -Security $emptyDaclSecurity)) {
+    throw 'An empty deny-all filesystem DACL was rejected.'
 }
 
 Write-Output 'Validated MSI filesystem-rights classification.'

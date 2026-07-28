@@ -27,10 +27,23 @@ if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
     throw 'The MSI installation test requires Windows.'
 }
 
-$currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
-$principal = New-Object Security.Principal.WindowsPrincipal $currentIdentity
-if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    throw 'The MSI installation test must run from an elevated administrator shell.'
+$currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent(
+    [Security.Principal.TokenAccessLevels]::Query -bor
+    [Security.Principal.TokenAccessLevels]::Duplicate)
+try {
+    $principal =
+        [Security.Principal.WindowsPrincipal]::new($currentIdentity)
+    if (-not $principal.IsInRole(
+            [Security.Principal.WindowsBuiltInRole]::Administrator) -or
+        $null -eq $currentIdentity.User) {
+        throw 'The MSI installation test must run from an elevated administrator shell.'
+    }
+    $currentUserSid =
+        [Security.Principal.SecurityIdentifier]::new(
+            $currentIdentity.User.Value)
+}
+finally {
+    $currentIdentity.Dispose()
 }
 
 $resolvedMsiPath = [IO.Path]::GetFullPath($MsiPath)
@@ -63,83 +76,9 @@ if ($metadata.Schema -cne 'WireSockUI-Msi-Validation-v1' -or
     throw 'The validation metadata has an invalid product identity.'
 }
 
-if ($null -eq ('WireSockUI.InstallerTest.KnownFolders' -as [type])) {
-    Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-
-namespace WireSockUI.InstallerTest
-{
-    public static class KnownFolders
-    {
-        [DllImport("shell32.dll")]
-        private static extern int SHGetKnownFolderPath(
-            ref Guid folderId,
-            uint flags,
-            IntPtr token,
-            out IntPtr path);
-
-        public static string GetPath(Guid folderId)
-        {
-            IntPtr path = IntPtr.Zero;
-            int result = SHGetKnownFolderPath(
-                ref folderId,
-                0,
-                IntPtr.Zero,
-                out path);
-            if (result != 0)
-                Marshal.ThrowExceptionForHR(result);
-            if (path == IntPtr.Zero)
-                throw new InvalidOperationException(
-                    "SHGetKnownFolderPath returned a null path.");
-            try
-            {
-                return Marshal.PtrToStringUni(path);
-            }
-            finally
-            {
-                Marshal.FreeCoTaskMem(path);
-            }
-        }
-    }
-}
-'@
-}
-
-function Assert-TrustedDirectoryPath {
-    param(
-        [string]$Path,
-        [string]$Description
-    )
-
-    if ([string]::IsNullOrWhiteSpace($Path)) {
-        throw "Windows did not expose the $Description path."
-    }
-    $resolvedPath = [IO.Path]::GetFullPath($Path)
-    if (-not [IO.Directory]::Exists($resolvedPath)) {
-        throw "The $Description path '$resolvedPath' does not exist."
-    }
-    $entry = Get-Item -LiteralPath $resolvedPath -Force
-    if (($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-        throw "The $Description path '$resolvedPath' is a reparse point."
-    }
-    return $resolvedPath
-}
-
-function Get-TrustedKnownFolderPath {
-    param(
-        [Guid]$FolderId,
-        [string]$Description
-    )
-
-    return Assert-TrustedDirectoryPath `
-        -Path ([WireSockUI.InstallerTest.KnownFolders]::GetPath($FolderId)) `
-        -Description $Description
-}
-
 function Get-TrustedNativeProgramFilesPath {
     if ([Environment]::Is64BitProcess) {
-        return Get-TrustedKnownFolderPath `
+        return Get-MsiTrustedKnownFolderPath `
             -FolderId ([Guid]'6D809377-6AF0-444B-8957-A3773F02200E') `
             -Description 'native Program Files'
     }
@@ -164,7 +103,7 @@ function Get-TrustedNativeProgramFilesPath {
         if ($programFilesPath -isnot [string]) {
             throw 'The native ProgramFilesDir registry value is missing or has an invalid type.'
         }
-        return Assert-TrustedDirectoryPath `
+        return Assert-MsiTrustedDirectoryPath `
             -Path $programFilesPath `
             -Description 'native Program Files'
     }
@@ -367,7 +306,7 @@ if ($architecture -ne 'x86' -and -not [Environment]::Is64BitOperatingSystem) {
     throw "A $architecture MSI cannot be installed on 32-bit Windows."
 }
 $programFilesRoot = if ($architecture -eq 'x86') {
-    Get-TrustedKnownFolderPath `
+    Get-MsiTrustedKnownFolderPath `
         -FolderId ([Guid]'7C5A40EF-A0FB-4BFC-874A-C0F2E0B9FA8E') `
         -Description '32-bit Program Files'
 }
@@ -386,14 +325,14 @@ if ($architecture -eq 'arm64') {
 
 $installRoot = Join-Path $programFilesRoot 'WireSock Foundation WireSock UI'
 $legacyInstallRoot = Join-Path $programFilesRoot 'WireSock UI'
-$commonPrograms = Get-TrustedKnownFolderPath `
+$commonPrograms = Get-MsiTrustedKnownFolderPath `
     -FolderId (Get-MsiCommonProgramsFolderId) `
     -Description 'all-users Programs'
 $shortcutPath = Join-Path $commonPrograms 'WireSock UI.lnk'
-$windowsDirectory = Get-TrustedKnownFolderPath `
+$windowsDirectory = Get-MsiTrustedKnownFolderPath `
     -FolderId ([Guid]'F38BF404-1D43-42F2-9305-67DE0B28FC23') `
     -Description 'Windows'
-$systemDirectory = Assert-TrustedDirectoryPath `
+$systemDirectory = Assert-MsiTrustedDirectoryPath `
     -Path (Join-Path $windowsDirectory 'System32') `
     -Description 'Windows system directory'
 $trustedMsiExecPath = Join-Path $systemDirectory 'msiexec.exe'
@@ -622,16 +561,11 @@ function Invoke-InstalledNativeHostSmoke {
         ForEach-Object { Write-Host "$Phase`: $_" }
 }
 
-function Get-SidValue {
-    param([Security.Principal.IdentityReference]$IdentityReference)
-
-    return $IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
-}
-
 function Assert-ProtectedEntry {
     param(
         [string]$Path,
-        [switch]$RequireExactApplicationDirectoryAcl
+        [switch]$RequireExactApplicationDirectoryAcl,
+        [switch]$AllowDeleteOnly
     )
 
     $entry = Get-Item -LiteralPath $Path -Force
@@ -640,6 +574,9 @@ function Assert-ProtectedEntry {
     }
 
     $acl = Get-Acl -LiteralPath $Path
+    if (-not (Test-MsiSecurityDescriptorHasNonNullDacl -Security $acl)) {
+        throw "Installed entry '$Path' has an absent or unreadable DACL."
+    }
     $ownerSid = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
     $privilegedOwnerSids = @(
         'S-1-5-18',
@@ -655,11 +592,24 @@ function Assert-ProtectedEntry {
         'S-1-5-32-544',
         'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'
     )
-    foreach ($rule in $acl.Access) {
-        $ruleSid = Get-SidValue -IdentityReference $rule.IdentityReference
+    $accessRules = @(
+        $acl.GetAccessRules(
+            $true,
+            $true,
+            [Security.Principal.SecurityIdentifier])
+    )
+    foreach ($rule in $accessRules) {
+        $ruleSid = $rule.IdentityReference.Value
+        $rightsAreUnsafe = if ($AllowDeleteOnly) {
+            Test-MsiReplacementCapableFileSystemRights `
+                -Rights $rule.FileSystemRights
+        }
+        else {
+            Test-MsiWriteCapableFileSystemRights `
+                -Rights $rule.FileSystemRights
+        }
         if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
-            (Test-MsiWriteCapableFileSystemRights `
-                -Rights $rule.FileSystemRights) -and
+            $rightsAreUnsafe -and
             -not ($privilegedWriterSids -contains $ruleSid)) {
             throw "Installed entry '$Path' grants write-capable access to SID '$ruleSid'."
         }
@@ -678,11 +628,11 @@ function Assert-ProtectedEntry {
         $seenExpectedRuleSids =
             New-Object 'System.Collections.Generic.HashSet[string]' (
                 [StringComparer]::Ordinal)
-        if (@($acl.Access).Count -ne $expectedRules.Count) {
-            throw "The application directory has $(@($acl.Access).Count) ACL entries; expected $($expectedRules.Count)."
+        if ($accessRules.Count -ne $expectedRules.Count) {
+            throw "The application directory has $($accessRules.Count) ACL entries; expected $($expectedRules.Count)."
         }
-        foreach ($rule in $acl.Access) {
-            $ruleSid = Get-SidValue -IdentityReference $rule.IdentityReference
+        foreach ($rule in $accessRules) {
+            $ruleSid = $rule.IdentityReference.Value
             if (-not $expectedRules.ContainsKey($ruleSid) -or
                 -not $seenExpectedRuleSids.Add($ruleSid) -or
                 $rule.IsInherited -or
@@ -803,16 +753,29 @@ try {
     if (-not [IO.File]::Exists($shortcutPath)) {
         throw "All-users shortcut '$shortcutPath' was not installed."
     }
-    Assert-ProtectedEntry -Path $shortcutPath
+    # The disposable runner grants its interactive account inherited
+    # delete-only access under Common Programs. The validated parent denies
+    # untrusted creation, so that ACE cannot replace the shortcut.
+    Assert-ProtectedEntry -Path $shortcutPath -AllowDeleteOnly
     $shell = $null
     $shortcut = $null
     try {
         $shell = New-Object -ComObject WScript.Shell
         $shortcut = $shell.CreateShortcut($shortcutPath)
-        if ([IO.Path]::GetFullPath([string]$shortcut.TargetPath) -cne
-                [IO.Path]::GetFullPath((Join-Path $installRoot 'WireSockUI.exe')) -or
-            [IO.Path]::GetFullPath([string]$shortcut.WorkingDirectory) -cne
-                [IO.Path]::GetFullPath($installRoot) -or
+        $actualTarget = [IO.Path]::GetFullPath(
+            [string]$shortcut.TargetPath)
+        $expectedTarget = [IO.Path]::GetFullPath(
+            (Join-Path $installRoot 'WireSockUI.exe'))
+        $actualWorkingDirectory = [IO.Path]::GetFullPath(
+            [string]$shortcut.WorkingDirectory)
+        if (-not [string]::Equals(
+                $actualTarget,
+                $expectedTarget,
+                [StringComparison]::OrdinalIgnoreCase) -or
+            -not [string]::Equals(
+                $actualWorkingDirectory.TrimEnd('\'),
+                [IO.Path]::GetFullPath($installRoot).TrimEnd('\'),
+                [StringComparison]::OrdinalIgnoreCase) -or
             -not [string]::IsNullOrEmpty([string]$shortcut.Arguments)) {
             throw 'All-users shortcut does not target the stable native launcher exactly.'
         }
@@ -869,9 +832,9 @@ try {
     $repairFilePath = Join-Path $installRoot 'WireSockUI.Managed.dll'
     Remove-Item -LiteralPath $repairFilePath -Force
     $unsafeAcl = Get-Acl -LiteralPath $installRoot
-    $unsafeAcl.SetOwner($currentIdentity.User)
+    $unsafeAcl.SetOwner($currentUserSid)
     $unsafeRule = [Security.AccessControl.FileSystemAccessRule]::new(
-        $currentIdentity.User,
+        $currentUserSid,
         [Security.AccessControl.FileSystemRights]::FullControl,
         [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
             [Security.AccessControl.InheritanceFlags]::ObjectInherit,
