@@ -23,6 +23,8 @@ $productionWorkflowDigests = @{
     # digest is not an authenticity mechanism; it makes every workflow change
     # explicit and subject to focused trust-boundary review.
     'ci.yml' = '0842c00818f27240941bb914c8cef7a0871054db899ac60fb0e647ef2900e1d6'
+    'hosted-sdk-experiment.yml' =
+        '98bd609db83dbb8e91192836fb11ff2a00a7003ab606367834e72805a557203b'
     'main.yml' = '5cacdadaec0b2ad9e1d6125ee4cd76c48d55ff5770d0685e11b350d9df4d4014'
     'release-signing.yml' =
         '88b3e309933fdc767ac5aeed1cbd70ce849eab8041529241355f64ed8be3d99c'
@@ -541,7 +543,7 @@ foreach ($workflowFile in $workflowFiles) {
             continue
         }
         if ($triggerLine -cnotmatch
-            '^  (?<event>push|pull_request|schedule|workflow_call):\s*$' -or
+            '^  (?<event>push|pull_request|schedule|workflow_call|workflow_dispatch):\s*$' -or
             -not $triggerNames.Add([string]$Matches.event)) {
             throw "Workflow '$($workflowFile.Name)' contains a noncanonical, duplicate, or forbidden event trigger on line $($triggerLineIndex + 1)."
         }
