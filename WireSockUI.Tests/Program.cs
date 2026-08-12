@@ -108,8 +108,17 @@ namespace WireSockUI.Tests
             if (TryRunAutoRunServiceTestHelper(args, out var autoRunHelperExitCode))
                 return autoRunHelperExitCode;
 
-            if (args?.Any(arg => string.Equals(arg, "--sdk-integration", StringComparison.OrdinalIgnoreCase)) == true)
-                return RunSdkIntegrationSmoke();
+            var sdkIntegrationRequested = args?.Any(arg => string.Equals(
+                arg, "--sdk-integration", StringComparison.OrdinalIgnoreCase)) == true;
+            var syntheticSdkIntegrationRequested = args?.Any(arg => string.Equals(
+                arg, "--sdk-synthetic-integration", StringComparison.OrdinalIgnoreCase)) == true;
+            if (sdkIntegrationRequested && syntheticSdkIntegrationRequested)
+            {
+                Console.WriteLine("FAIL --sdk-integration and --sdk-synthetic-integration are mutually exclusive.");
+                return 64;
+            }
+            if (sdkIntegrationRequested || syntheticSdkIntegrationRequested)
+                return RunSdkIntegrationSmoke(!syntheticSdkIntegrationRequested);
 
             var tests = new Dictionary<string, Action>
             {
@@ -296,6 +305,7 @@ namespace WireSockUI.Tests
                 { "WireSock manager rolls back failed log-level changes", WireSockManagerRollsBackFailedLogLevelChanges },
                 { "SDK smoke rejects unsafe integration profiles", SdkSmokeRejectsUnsafeIntegrationProfiles },
                 { "SDK smoke cleans up failed tunnel creation", SdkSmokeCleansUpFailedTunnelCreation },
+                { "SDK synthetic smoke permits an inactive TEST-NET tunnel", SdkSyntheticSmokePermitsInactiveTunnel },
                 { "SDK smoke runs final cleanup after failures", SdkSmokeRunsFinalCleanupAfterFailures },
                 { "Profile rename commits and rolls back transactionally", ProfileRenameCommitsAndRollsBackTransactionally },
                 { "Profile rename recovery completes interrupted transactions", ProfileRenameRecoveryCompletesInterruptedTransactions },
@@ -474,14 +484,17 @@ namespace WireSockUI.Tests
             }
         }
 
-        private static int RunSdkIntegrationSmoke()
+        private static int RunSdkIntegrationSmoke(bool requireActiveTunnel)
         {
+            var integrationOption = requireActiveTunnel
+                ? "--sdk-integration"
+                : "--sdk-synthetic-integration";
             using (var identity = WindowsIdentity.GetCurrent())
             {
                 var principal = new WindowsPrincipal(identity);
                 if (!principal.IsInRole(WindowsBuiltInRole.Administrator))
                 {
-                    Console.WriteLine("FAIL --sdk-integration requires an elevated runner token.");
+                    Console.WriteLine($"FAIL {integrationOption} requires an elevated runner token.");
                     return 1;
                 }
             }
@@ -489,7 +502,7 @@ namespace WireSockUI.Tests
             var libraryPath = Environment.GetEnvironmentVariable("WIRESOCKUI_WGBOOSTER_PATH");
             if (string.IsNullOrWhiteSpace(libraryPath))
             {
-                Console.WriteLine("FAIL WIRESOCKUI_WGBOOSTER_PATH is required for --sdk-integration.");
+                Console.WriteLine($"FAIL WIRESOCKUI_WGBOOSTER_PATH is required for {integrationOption}.");
                 return 1;
             }
 
@@ -534,17 +547,23 @@ namespace WireSockUI.Tests
                 RunWithFinalCleanup(
                     () =>
                     {
-                        RunSdkModeSmoke(api, WireSockManager.Mode.Transparent, transparentProfile, logPrinter);
+                        RunSdkModeSmoke(api, WireSockManager.Mode.Transparent, transparentProfile, logPrinter,
+                            requireActiveTunnel);
                         EnsureGlobalNetworkLockInactive(true);
-                        RunSdkModeSmoke(api, WireSockManager.Mode.VirtualAdapter, virtualAdapterProfile, logPrinter);
+                        RunSdkModeSmoke(api, WireSockManager.Mode.VirtualAdapter, virtualAdapterProfile, logPrinter,
+                            requireActiveTunnel);
                         EnsureGlobalNetworkLockInactive(true);
-                        RunSdkModeSmoke(api, WireSockManager.Mode.Transparent, amneziaProfile, logPrinter);
+                        RunSdkModeSmoke(api, WireSockManager.Mode.Transparent, amneziaProfile, logPrinter,
+                            requireActiveTunnel);
                         EnsureGlobalNetworkLockInactive(true);
                     },
                     () => EnsureGlobalNetworkLockInactive(true));
 
+                var connectivityScope = requireActiveTunnel
+                    ? "connected"
+                    : "synthetic local (external connectivity not asserted)";
                 Console.WriteLine(
-                    "PASS real wgbooster.dll transparent, virtual-adapter, Kill Switch, and Amnezia lifecycle smoke tests.");
+                    $"PASS real wgbooster.dll transparent, virtual-adapter, Kill Switch, and Amnezia {connectivityScope} lifecycle smoke tests.");
                 return 0;
             }
             catch (Exception ex)
@@ -606,7 +625,7 @@ namespace WireSockUI.Tests
         }
 
         private static void RunSdkModeSmoke(IWireSockNativeApi api, WireSockManager.Mode mode, string profilePath,
-            WireguardBoosterExports.LogPrinter logPrinter)
+            WireguardBoosterExports.LogPrinter logPrinter, bool requireActiveTunnel = true)
         {
             var handle = IntPtr.Zero;
             var tunnelCreationAttempted = false;
@@ -666,8 +685,14 @@ namespace WireSockUI.Tests
                         $"wgbooster failed to start the {mode} integration tunnel.");
                 tunnelStarted = true;
 
-                if (!api.GetTunnelActive(mode, handle))
-                    throw new Win32Exception(Marshal.GetLastWin32Error(),
+                SetLastErrorForTest(0);
+                var tunnelActive = api.GetTunnelActive(mode, handle);
+                var tunnelActiveError = Marshal.GetLastWin32Error();
+                if (tunnelActiveError != 0)
+                    throw new Win32Exception(tunnelActiveError,
+                        $"wgbooster failed to query the {mode} integration tunnel active state.");
+                if (!tunnelActive && requireActiveTunnel)
+                    throw new InvalidOperationException(
                         $"wgbooster did not report the {mode} integration tunnel active.");
 
                 SetLastErrorForTest(0);
@@ -7102,6 +7127,35 @@ namespace WireSockUI.Tests
                 "");
             AssertEqual(1, failedLockCleanupApi.DropCount);
             AssertEqual(1, failedLockCleanupApi.ReleaseCount);
+        }
+
+        private static void SdkSyntheticSmokePermitsInactiveTunnel()
+        {
+            WireguardBoosterExports.LogPrinter logPrinter = message => { };
+            var syntheticApi = new FakeWireSockNativeApi { TunnelActive = false };
+
+            RunSdkModeSmoke(syntheticApi, WireSockManager.Mode.Transparent, "test.conf", logPrinter, false);
+            AssertEqual(1, syntheticApi.TunnelActiveQueryCount);
+            AssertEqual(1, syntheticApi.TunnelStateQueryCount);
+            AssertEqual(1, syntheticApi.DropCount);
+            AssertEqual(1, syntheticApi.ReleaseCount);
+
+            var connectedApi = new FakeWireSockNativeApi { TunnelActive = false };
+            AssertThrows<InvalidOperationException>(
+                () => RunSdkModeSmoke(connectedApi, WireSockManager.Mode.Transparent, "test.conf", logPrinter),
+                "did not report");
+            AssertEqual(1, connectedApi.DropCount);
+            AssertEqual(1, connectedApi.ReleaseCount);
+
+            var failedQueryApi = new FakeWireSockNativeApi
+            {
+                TunnelActive = false,
+                TunnelActiveError = 5
+            };
+            AssertThrows<Win32Exception>(
+                () => RunSdkModeSmoke(
+                    failedQueryApi, WireSockManager.Mode.Transparent, "test.conf", logPrinter, false),
+                "failed to query");
         }
 
         private static void SdkSmokeRunsFinalCleanupAfterFailures()

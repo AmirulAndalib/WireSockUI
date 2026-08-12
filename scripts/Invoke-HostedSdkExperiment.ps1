@@ -520,7 +520,7 @@ try {
         /p:Platform=x64 `
         /p:UseSharedCompilation=false `
         -- `
-        --sdk-integration
+        --sdk-synthetic-integration
     Assert-LastExitCode -Operation 'Running the real x64 SDK lifecycle smoke test'
 
     if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_STEP_SUMMARY)) {
@@ -529,7 +529,7 @@ try {
             '',
             "- Installed WinGet package ``$packageId`` version ``$packageVersion``.",
             '- Built and installation-tested the x64 no-UWP WireSockUI MSI.',
-            '- Passed transparent, virtual-adapter, network-lock, and Amnezia SDK lifecycle checks.'
+            '- Passed synthetic transparent, virtual-adapter, network-lock, and Amnezia SDK lifecycle checks without asserting external connectivity.'
         )
     }
 }
