@@ -377,7 +377,6 @@ try {
         throw "SDK installer has Authenticode status '$($installerSignature.Status)'."
     }
 
-    $installedSdk = $true
     $installerProcess = Start-Process `
         -FilePath $installers[0].FullName `
         -ArgumentList @('/S', '/NCRC') `
@@ -388,6 +387,7 @@ try {
             "Installing $packageId $packageVersion failed with exit code " +
             "$($installerProcess.ExitCode).")
     }
+    $installedSdk = $true
 
     $libraries = @(Get-WireSockSdkLibraries)
     if ($libraries.Count -eq 0) {
