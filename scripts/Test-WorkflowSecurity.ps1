@@ -24,7 +24,7 @@ $productionWorkflowDigests = @{
     # explicit and subject to focused trust-boundary review.
     'ci.yml' = '0842c00818f27240941bb914c8cef7a0871054db899ac60fb0e647ef2900e1d6'
     'hosted-sdk-experiment.yml' =
-        '98bd609db83dbb8e91192836fb11ff2a00a7003ab606367834e72805a557203b'
+        'aaebba5fefcdbb9f46432cc8a5617126baeb490ddfcb8d498d990aff280089b6'
     'main.yml' = '5cacdadaec0b2ad9e1d6125ee4cd76c48d55ff5770d0685e11b350d9df4d4014'
     'release-signing.yml' =
         '88b3e309933fdc767ac5aeed1cbd70ce849eab8041529241355f64ed8be3d99c'
@@ -922,6 +922,56 @@ if (Test-Path -LiteralPath $releaseSigningPath -PathType Leaf) {
                 throw "The protected signing workflow invokes '$trustedValidator' outside the workflow-pinned trusted tooling tree."
             }
         }
+    }
+}
+
+$hostedSdkExperimentPath =
+    Join-Path $workflowRoot.FullName 'hosted-sdk-experiment.yml'
+if (Test-Path -LiteralPath $hostedSdkExperimentPath -PathType Leaf) {
+    $hostedSdkExperimentWorkflow = Get-Content `
+        -LiteralPath $hostedSdkExperimentPath `
+        -Raw `
+        -Encoding UTF8
+    Assert-WorkflowCriticalStep `
+        -WorkflowText $hostedSdkExperimentWorkflow `
+        -StepName 'Authorize protected default-branch revision' `
+        -Description 'The hosted SDK experiment workflow'
+    $hostedSdkAuthorizationScript = Get-WorkflowLiteralRunScript `
+        -WorkflowText $hostedSdkExperimentWorkflow `
+        -StepName 'Authorize protected default-branch revision' `
+        -Description 'The hosted SDK experiment workflow'
+    Assert-PowerShellExecutableLines `
+        -Script $hostedSdkAuthorizationScript `
+        -Description 'The hosted SDK experiment authorization step' `
+        -RequiredLines @(
+            'if ($env:GITHUB_REPOSITORY -cne ''wiresock/WireSockUI'') {',
+            'if ($env:EVENT_NAME -notin @(''push'', ''schedule'', ''workflow_dispatch'')) {',
+            'if ($env:WORKFLOW_REF -cne $expectedRef) {',
+            '$trustedSha -cne $defaultBranchSha) {')
+    $hostedSdkExecutableLines =
+        [Collections.Generic.HashSet[string]]::new(
+            [StringComparer]::Ordinal)
+    foreach ($hostedSdkLine in
+        ($hostedSdkExperimentWorkflow -split '\r?\n')) {
+        [void]$hostedSdkExecutableLines.Add($hostedSdkLine.Trim())
+    }
+    foreach ($requiredHostedSdkLine in @(
+            "- cron: '17 5 * * 1'",
+            'cancel-in-progress: true',
+            "runs-on: `${{ matrix.platform == 'ARM64' && 'windows-11-arm' || 'windows-latest' }}",
+            "platform: ['x86', 'x64', 'ARM64']",
+            'ref: ${{ needs.authorize.outputs.trusted_sha }}',
+            'TEST_PLATFORM: ${{ matrix.platform }}',
+            'run: ./scripts/Invoke-HostedSdkExperiment.ps1 -Platform $env:TEST_PLATFORM')) {
+        if (-not $hostedSdkExecutableLines.Contains(
+                $requiredHostedSdkLine)) {
+            throw "The hosted SDK experiment is missing matrix trust boundary '$requiredHostedSdkLine'."
+        }
+    }
+    if ([regex]::Matches(
+            $hostedSdkExperimentWorkflow,
+            '(?m)^\s+run:\s+\./scripts/Invoke-HostedSdkExperiment\.ps1\s').Count -ne 1) {
+        throw 'The hosted SDK matrix must invoke its architecture-validated experiment script exactly once.'
     }
 }
 
