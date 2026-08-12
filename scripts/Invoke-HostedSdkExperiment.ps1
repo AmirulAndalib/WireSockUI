@@ -14,6 +14,28 @@ $packageInstallerSha256 =
     'ABFEEBDC645DE36B95FABBED00C7FDB0BF4D0C68C5518608450619C61876D33E'
 $wingetClientModuleVersion = '1.29.280'
 $experimentVersion = '1.0.0'
+$repositoryRoot = [IO.Path]::GetFullPath(
+    (Split-Path -Parent $PSScriptRoot))
+$solutionPath = Join-Path $repositoryRoot 'WireSockUI.sln'
+$installerProjectPath = Join-Path `
+    $repositoryRoot `
+    'WireSockUI.Installer\WireSockUI.Installer.wixproj'
+$applicationProjectPath = Join-Path `
+    $repositoryRoot `
+    'WireSockUI\WireSockUI.csproj'
+$testProjectPath = Join-Path `
+    $repositoryRoot `
+    'WireSockUI.Tests\WireSockUI.Tests.csproj'
+$publishedPayloadPath = Join-Path `
+    $repositoryRoot `
+    'bin\x64\Release\net472-windows\publish'
+$workflowSecurityScriptPath = Join-Path `
+    $PSScriptRoot `
+    'Test-WorkflowSecurity.ps1'
+$buildMsiScriptPath = Join-Path $PSScriptRoot 'Build-Msi.ps1'
+$testMsiInstallationScriptPath = Join-Path `
+    $PSScriptRoot `
+    'Test-MsiInstallation.ps1'
 
 function Assert-LastExitCode {
     param(
@@ -249,26 +271,37 @@ if ([string]::IsNullOrWhiteSpace($env:RUNNER_TEMP) -or
     [string]::IsNullOrWhiteSpace($env:GITHUB_WORKSPACE)) {
     throw 'GitHub runner paths are unavailable.'
 }
+$runnerWorkspace = [IO.Path]::GetFullPath($env:GITHUB_WORKSPACE)
+if (-not [string]::Equals(
+        $repositoryRoot.TrimEnd([IO.Path]::DirectorySeparatorChar),
+        $runnerWorkspace.TrimEnd([IO.Path]::DirectorySeparatorChar),
+        [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Script repository root '$repositoryRoot' does not match GITHUB_WORKSPACE '$runnerWorkspace'."
+}
 
-$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent(
+    [Security.Principal.TokenAccessLevels]::Query -bor
+    [Security.Principal.TokenAccessLevels]::Duplicate)
 try {
-    $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+    $principal =
+        [Security.Principal.WindowsPrincipal]::new($currentIdentity)
     if (-not $principal.IsInRole(
-            [Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        throw 'The hosted SDK experiment requires an elevated Windows runner token.'
+            [Security.Principal.WindowsBuiltInRole]::Administrator) -or
+        $null -eq $currentIdentity.User) {
+        throw 'The hosted SDK experiment must run from an elevated administrator shell.'
     }
 }
 finally {
-    $identity.Dispose()
+    $currentIdentity.Dispose()
 }
 
-$headSha = (git rev-parse 'HEAD^{commit}').Trim()
+$headSha = (git -C $repositoryRoot rev-parse 'HEAD^{commit}').Trim()
 Assert-LastExitCode -Operation 'Resolving the experiment revision'
 if ($headSha -cne $env:GITHUB_SHA) {
     throw "Checked-out revision '$headSha' does not match '$env:GITHUB_SHA'."
 }
 
-./scripts/Test-WorkflowSecurity.ps1 -RequireProductionContracts
+& $workflowSecurityScriptPath -RequireProductionContracts
 $wingetPath = Get-WinGetExecutable
 & $wingetPath --version
 Assert-LastExitCode -Operation 'Inspecting the WinGet version'
@@ -349,16 +382,16 @@ try {
 
     $profiles = New-HostedSdkProfiles -Directory $profileRoot
 
-    dotnet restore WireSockUI.sln `
+    dotnet restore $solutionPath `
         /p:Platform=x64 `
         --locked-mode `
         -m:1
     Assert-LastExitCode -Operation 'Restoring the x64 solution'
-    dotnet restore WireSockUI.Installer/WireSockUI.Installer.wixproj `
+    dotnet restore $installerProjectPath `
         --locked-mode
     Assert-LastExitCode -Operation 'Restoring the installer toolchain'
 
-    dotnet publish WireSockUI/WireSockUI.csproj `
+    dotnet publish $applicationProjectPath `
         --configuration Release `
         --framework net472-windows `
         --no-restore `
@@ -371,11 +404,11 @@ try {
         -m:1
     Assert-LastExitCode -Operation 'Publishing the x64 WireSockUI candidate'
 
-    ./scripts/Build-Msi.ps1 `
+    & $buildMsiScriptPath `
         -Platform x64 `
         -Version $experimentVersion `
         -Flavor no-uwp `
-        -PayloadDirectory './bin/x64/Release/net472-windows/publish' `
+        -PayloadDirectory $publishedPayloadPath `
         -OutputDirectory $msiRoot `
         -AllowUnsignedPayload `
         -NoRestore
@@ -384,7 +417,7 @@ try {
     if ($msis.Count -ne 1) {
         throw "Expected one hosted experiment MSI; found $($msis.Count)."
     }
-    ./scripts/Test-MsiInstallation.ps1 `
+    & $testMsiInstallationScriptPath `
         -MsiPath $msis[0].FullName `
         -ValidationMetadataPath "$($msis[0].FullName).validation.json" `
         -EphemeralMachine `
@@ -395,7 +428,7 @@ try {
     $env:WIRESOCKUI_TEST_PROFILE_VIRTUAL_ADAPTER = $profiles.VirtualAdapter
     $env:WIRESOCKUI_TEST_PROFILE_AMNEZIA = $profiles.Amnezia
     dotnet run `
-        --project WireSockUI.Tests/WireSockUI.Tests.csproj `
+        --project $testProjectPath `
         --configuration Release `
         --framework net472-windows `
         --no-restore `
