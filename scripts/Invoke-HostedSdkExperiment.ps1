@@ -36,6 +36,11 @@ $buildMsiScriptPath = Join-Path $PSScriptRoot 'Build-Msi.ps1'
 $testMsiInstallationScriptPath = Join-Path `
     $PSScriptRoot `
     'Test-MsiInstallation.ps1'
+$wireSockSdkRegistryPaths = @(
+    'SOFTWARE\WireSock Foundation\WireSock Secure Connect',
+    'SOFTWARE\WireSock Foundation\WireSock Secure Connect Pro',
+    'SOFTWARE\NTKernelResources\WinpkFilterForVPNClient'
+)
 
 function Assert-LastExitCode {
     param(
@@ -46,6 +51,27 @@ function Assert-LastExitCode {
     if ($LASTEXITCODE -ne 0) {
         throw "$Operation failed with exit code $LASTEXITCODE."
     }
+}
+
+function Assert-SdkInstallerExitCode {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int] $ExitCode,
+
+        [Parameter(Mandatory = $true)]
+        [string] $Operation
+    )
+
+    if ($ExitCode -eq 0) {
+        return
+    }
+    if ($ExitCode -eq 3010) {
+        Write-Warning (
+            "$Operation succeeded but requested a restart; continuing on " +
+            'the disposable hosted runner.')
+        return
+    }
+    throw "$Operation failed with exit code $ExitCode."
 }
 
 function Remove-HostedExperimentDirectory {
@@ -115,11 +141,6 @@ function Get-WinGetExecutable {
 }
 
 function Get-WireSockSdkLibraries {
-    $registryPaths = @(
-        'SOFTWARE\WireSock Foundation\WireSock Secure Connect',
-        'SOFTWARE\WireSock Foundation\WireSock Secure Connect Pro',
-        'SOFTWARE\NTKernelResources\WinpkFilterForVPNClient'
-    )
     $registryViews = @(
         [Microsoft.Win32.RegistryView]::Registry64,
         [Microsoft.Win32.RegistryView]::Registry32
@@ -130,7 +151,7 @@ function Get-WireSockSdkLibraries {
             [Microsoft.Win32.RegistryHive]::LocalMachine,
             $view)
         try {
-            foreach ($registryPath in $registryPaths) {
+            foreach ($registryPath in $wireSockSdkRegistryPaths) {
                 $key = $baseKey.OpenSubKey($registryPath)
                 try {
                     $location = if ($null -eq $key) {
@@ -181,18 +202,22 @@ function Wait-WireSockSdkLibraries {
         [int] $PollIntervalMilliseconds = 2000
     )
 
+    $timeoutMilliseconds = $TimeoutSeconds * 1000
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     try {
-        do {
+        while ($stopwatch.ElapsedMilliseconds -lt $timeoutMilliseconds) {
             $libraries = @(Get-WireSockSdkLibraries)
             if ($libraries.Count -gt 0) {
                 return $libraries
             }
-            if ($stopwatch.Elapsed.TotalSeconds -ge $TimeoutSeconds) {
-                break
+            $remainingMilliseconds =
+                $timeoutMilliseconds - $stopwatch.ElapsedMilliseconds
+            if ($remainingMilliseconds -gt 0) {
+                Start-Sleep -Milliseconds ([Math]::Min(
+                        $PollIntervalMilliseconds,
+                        [int]$remainingMilliseconds))
             }
-            Start-Sleep -Milliseconds $PollIntervalMilliseconds
-        } while ($true)
+        }
     }
     finally {
         $stopwatch.Stop()
@@ -200,7 +225,11 @@ function Wait-WireSockSdkLibraries {
 
     throw (
         "The SDK installer registered no wgbooster.dll candidate within " +
-        "$TimeoutSeconds seconds.")
+        "$TimeoutSeconds seconds while polling every " +
+        "$PollIntervalMilliseconds milliseconds. Expected InstallLocation " +
+        'under the 32-bit or 64-bit HKLM registry paths ' +
+        "'$($wireSockSdkRegistryPaths -join "', '")', with wgbooster.dll " +
+        'in that location, sdk, or bin.')
 }
 
 function Set-ProtectedProfileAcl {
@@ -413,11 +442,9 @@ try {
         -ArgumentList @('/S', '/NCRC') `
         -Wait `
         -PassThru
-    if ($installerProcess.ExitCode -ne 0) {
-        throw (
-            "Installing $packageId $packageVersion failed with exit code " +
-            "$($installerProcess.ExitCode).")
-    }
+    Assert-SdkInstallerExitCode `
+        -ExitCode $installerProcess.ExitCode `
+        -Operation "Installing $packageId $packageVersion"
     $installedSdk = $true
 
     $libraries = @(Wait-WireSockSdkLibraries)
