@@ -36,6 +36,11 @@ $buildMsiScriptPath = Join-Path $PSScriptRoot 'Build-Msi.ps1'
 $testMsiInstallationScriptPath = Join-Path `
     $PSScriptRoot `
     'Test-MsiInstallation.ps1'
+$wireSockSdkRegistryPaths = @(
+    'SOFTWARE\WireSock Foundation\WireSock Secure Connect',
+    'SOFTWARE\WireSock Foundation\WireSock Secure Connect Pro',
+    'SOFTWARE\NTKernelResources\WinpkFilterForVPNClient'
+)
 
 function Assert-LastExitCode {
     param(
@@ -46,6 +51,27 @@ function Assert-LastExitCode {
     if ($LASTEXITCODE -ne 0) {
         throw "$Operation failed with exit code $LASTEXITCODE."
     }
+}
+
+function Assert-SdkInstallerExitCode {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int] $ExitCode,
+
+        [Parameter(Mandatory = $true)]
+        [string] $Operation
+    )
+
+    if ($ExitCode -eq 0) {
+        return
+    }
+    if ($ExitCode -eq 3010) {
+        Write-Warning (
+            "$Operation succeeded but requested a restart; continuing on " +
+            'the disposable hosted runner.')
+        return
+    }
+    throw "$Operation failed with exit code $ExitCode."
 }
 
 function Remove-HostedExperimentDirectory {
@@ -115,11 +141,6 @@ function Get-WinGetExecutable {
 }
 
 function Get-WireSockSdkLibraries {
-    $registryPaths = @(
-        'SOFTWARE\WireSock Foundation\WireSock Secure Connect',
-        'SOFTWARE\WireSock Foundation\WireSock Secure Connect Pro',
-        'SOFTWARE\NTKernelResources\WinpkFilterForVPNClient'
-    )
     $registryViews = @(
         [Microsoft.Win32.RegistryView]::Registry64,
         [Microsoft.Win32.RegistryView]::Registry32
@@ -130,7 +151,7 @@ function Get-WireSockSdkLibraries {
             [Microsoft.Win32.RegistryHive]::LocalMachine,
             $view)
         try {
-            foreach ($registryPath in $registryPaths) {
+            foreach ($registryPath in $wireSockSdkRegistryPaths) {
                 $key = $baseKey.OpenSubKey($registryPath)
                 try {
                     $location = if ($null -eq $key) {
@@ -170,6 +191,45 @@ function Get-WireSockSdkLibraries {
         }
     }
     return @($libraries)
+}
+
+function Wait-WireSockSdkLibraries {
+    param(
+        [ValidateRange(1, 600)]
+        [int] $TimeoutSeconds = 120,
+
+        [ValidateRange(100, 10000)]
+        [int] $PollIntervalMilliseconds = 2000
+    )
+
+    $timeoutMilliseconds = $TimeoutSeconds * 1000
+    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+    try {
+        while ($stopwatch.ElapsedMilliseconds -lt $timeoutMilliseconds) {
+            $libraries = @(Get-WireSockSdkLibraries)
+            if ($libraries.Count -gt 0) {
+                return $libraries
+            }
+            $remainingMilliseconds =
+                $timeoutMilliseconds - $stopwatch.ElapsedMilliseconds
+            if ($remainingMilliseconds -gt 0) {
+                Start-Sleep -Milliseconds ([Math]::Min(
+                        $PollIntervalMilliseconds,
+                        [int]$remainingMilliseconds))
+            }
+        }
+    }
+    finally {
+        $stopwatch.Stop()
+    }
+
+    throw (
+        "The SDK installer registered no wgbooster.dll candidate within " +
+        "$TimeoutSeconds seconds while polling every " +
+        "$PollIntervalMilliseconds milliseconds. Expected InstallLocation " +
+        'under the 32-bit or 64-bit HKLM registry paths ' +
+        "'$($wireSockSdkRegistryPaths -join "', '")', with wgbooster.dll " +
+        'in that location, sdk, or bin.')
 }
 
 function Set-ProtectedProfileAcl {
@@ -377,14 +437,17 @@ try {
         throw "SDK installer has Authenticode status '$($installerSignature.Status)'."
     }
 
-    & $installers[0].FullName /S /NCRC
-    Assert-LastExitCode -Operation "Installing $packageId $packageVersion"
+    $installerProcess = Start-Process `
+        -FilePath $installers[0].FullName `
+        -ArgumentList @('/S', '/NCRC') `
+        -Wait `
+        -PassThru
+    Assert-SdkInstallerExitCode `
+        -ExitCode $installerProcess.ExitCode `
+        -Operation "Installing $packageId $packageVersion"
     $installedSdk = $true
 
-    $libraries = @(Get-WireSockSdkLibraries)
-    if ($libraries.Count -eq 0) {
-        throw 'The SDK installer registered no wgbooster.dll candidate.'
-    }
+    $libraries = @(Wait-WireSockSdkLibraries)
     $libraryPath = $null
     foreach ($candidate in $libraries) {
         $signature = Get-AuthenticodeSignature -FilePath $candidate
