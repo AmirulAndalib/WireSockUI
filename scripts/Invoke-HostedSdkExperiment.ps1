@@ -377,7 +377,16 @@ try {
         throw "SDK installer has Authenticode status '$($installerSignature.Status)'."
     }
 
-    & $installers[0].FullName /S /NCRC
+    & $wingetPath install `
+        --id $packageId `
+        --exact `
+        --version $packageVersion `
+        --architecture x64 `
+        --source winget `
+        --silent `
+        --accept-package-agreements `
+        --accept-source-agreements `
+        --disable-interactivity
     Assert-LastExitCode -Operation "Installing $packageId $packageVersion"
     $installedSdk = $true
 
