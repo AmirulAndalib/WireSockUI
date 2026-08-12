@@ -172,6 +172,37 @@ function Get-WireSockSdkLibraries {
     return @($libraries)
 }
 
+function Wait-WireSockSdkLibraries {
+    param(
+        [ValidateRange(1, 600)]
+        [int] $TimeoutSeconds = 120,
+
+        [ValidateRange(100, 10000)]
+        [int] $PollIntervalMilliseconds = 2000
+    )
+
+    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+    try {
+        do {
+            $libraries = @(Get-WireSockSdkLibraries)
+            if ($libraries.Count -gt 0) {
+                return $libraries
+            }
+            if ($stopwatch.Elapsed.TotalSeconds -ge $TimeoutSeconds) {
+                break
+            }
+            Start-Sleep -Milliseconds $PollIntervalMilliseconds
+        } while ($true)
+    }
+    finally {
+        $stopwatch.Stop()
+    }
+
+    throw (
+        "The SDK installer registered no wgbooster.dll candidate within " +
+        "$TimeoutSeconds seconds.")
+}
+
 function Set-ProtectedProfileAcl {
     param(
         [Parameter(Mandatory = $true)]
@@ -389,10 +420,7 @@ try {
     }
     $installedSdk = $true
 
-    $libraries = @(Get-WireSockSdkLibraries)
-    if ($libraries.Count -eq 0) {
-        throw 'The SDK installer registered no wgbooster.dll candidate.'
-    }
+    $libraries = @(Wait-WireSockSdkLibraries)
     $libraryPath = $null
     foreach ($candidate in $libraries) {
         $signature = Get-AuthenticodeSignature -FilePath $candidate
