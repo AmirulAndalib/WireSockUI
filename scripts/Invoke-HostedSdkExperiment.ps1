@@ -377,18 +377,17 @@ try {
         throw "SDK installer has Authenticode status '$($installerSignature.Status)'."
     }
 
-    & $wingetPath install `
-        --id $packageId `
-        --exact `
-        --version $packageVersion `
-        --architecture x64 `
-        --source winget `
-        --silent `
-        --accept-package-agreements `
-        --accept-source-agreements `
-        --disable-interactivity
-    Assert-LastExitCode -Operation "Installing $packageId $packageVersion"
     $installedSdk = $true
+    $installerProcess = Start-Process `
+        -FilePath $installers[0].FullName `
+        -ArgumentList @('/S', '/NCRC') `
+        -Wait `
+        -PassThru
+    if ($installerProcess.ExitCode -ne 0) {
+        throw (
+            "Installing $packageId $packageVersion failed with exit code " +
+            "$($installerProcess.ExitCode).")
+    }
 
     $libraries = @(Get-WireSockSdkLibraries)
     if ($libraries.Count -eq 0) {
