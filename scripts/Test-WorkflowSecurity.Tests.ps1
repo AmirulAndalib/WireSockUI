@@ -37,6 +37,9 @@ jobs:
 $validShorthandWorkflow = $validWorkflow -replace (
     '(?m)^      - name: Checkout\r?\n        uses:'),
     '      - uses:'
+$validManualWorkflow = $validWorkflow -replace (
+    '(?m)^  push:\s*$'),
+    "  workflow_dispatch:`n  push:"
 $releaseSigningWorkflow = Get-Content `
     -LiteralPath (
         Join-Path (
@@ -63,6 +66,11 @@ $productionWorkflowDirectory = Join-Path (
 ) '.github\workflows'
 $productionCiWorkflow = Get-Content `
     -LiteralPath (Join-Path $productionWorkflowDirectory 'ci.yml') `
+    -Raw `
+    -Encoding UTF8
+$productionHostedSdkExperimentWorkflow = Get-Content `
+    -LiteralPath (
+        Join-Path $productionWorkflowDirectory 'hosted-sdk-experiment.yml') `
     -Raw `
     -Encoding UTF8
 $productionSdkContractDriftWorkflow = Get-Content `
@@ -154,6 +162,7 @@ function Invoke-Fixture {
     if ($RequireProductionContracts) {
         foreach ($workflowName in @(
                 'ci.yml',
+                'hosted-sdk-experiment.yml',
                 'sdk-contract-drift.yml',
                 'sdk-integration-schedule.yml')) {
             $sourcePath = Join-Path `
@@ -272,6 +281,10 @@ try {
         -Workflow $validShorthandWorkflow `
         -ShouldPass $true
     Invoke-Fixture `
+        -Name valid-manual `
+        -Workflow $validManualWorkflow `
+        -ShouldPass $true
+    Invoke-Fixture `
         -Name valid-trusted-release-signing-boundary `
         -Workflow $validWorkflow `
         -ReleaseSigningWorkflow $releaseSigningWorkflow `
@@ -316,6 +329,13 @@ try {
         -AuxiliaryWorkflowOverrides @{
             'ci.yml' = (
                 $productionCiWorkflow +
+                "`n# Any production workflow change requires contract review.")
+        }
+    Invoke-ProductionContractFixture `
+        -Name production-contract-locks-hosted-sdk-experiment-workflow `
+        -AuxiliaryWorkflowOverrides @{
+            'hosted-sdk-experiment.yml' = (
+                $productionHostedSdkExperimentWorkflow +
                 "`n# Any production workflow change requires contract review.")
         }
     Invoke-ProductionContractFixture `
