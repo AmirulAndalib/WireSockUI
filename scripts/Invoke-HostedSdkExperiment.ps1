@@ -48,6 +48,28 @@ function Assert-LastExitCode {
     }
 }
 
+function Remove-HostedExperimentDirectory {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Path
+    )
+
+    try {
+        if (Test-Path -LiteralPath $Path) {
+            Remove-Item `
+                -LiteralPath $Path `
+                -Recurse `
+                -Force `
+                -ErrorAction Stop
+        }
+    }
+    catch {
+        Write-Warning (
+            "Temporary directory cleanup failed for '$Path': " +
+            "$($_.Exception.Message) GitHub will discard the hosted VM.")
+    }
+}
+
 function Get-WinGetExecutable {
     $command = Get-Command winget.exe -ErrorAction SilentlyContinue
     if ($null -ne $command) {
@@ -454,27 +476,35 @@ finally {
             'WIRESOCKUI_TEST_PROFILE_TRANSPARENT',
             'WIRESOCKUI_TEST_PROFILE_VIRTUAL_ADAPTER',
             'WIRESOCKUI_TEST_PROFILE_AMNEZIA')) {
-        [Environment]::SetEnvironmentVariable($name, $null)
+        try {
+            [Environment]::SetEnvironmentVariable($name, $null)
+        }
+        catch {
+            Write-Warning (
+                "Environment cleanup failed for '$name': " +
+                "$($_.Exception.Message) GitHub will discard the hosted VM.")
+        }
     }
-    if (Test-Path -LiteralPath $profileRoot) {
-        Remove-Item -LiteralPath $profileRoot -Recurse -Force
-    }
-    if (Test-Path -LiteralPath $downloadRoot) {
-        Remove-Item -LiteralPath $downloadRoot -Recurse -Force
-    }
-    if (Test-Path -LiteralPath $msiRoot) {
-        Remove-Item -LiteralPath $msiRoot -Recurse -Force
-    }
+    Remove-HostedExperimentDirectory -Path $profileRoot
+    Remove-HostedExperimentDirectory -Path $downloadRoot
+    Remove-HostedExperimentDirectory -Path $msiRoot
     if ($installedSdk) {
-        & $wingetPath uninstall `
-            --id $packageId `
-            --exact `
-            --source winget `
-            --silent `
-            --accept-source-agreements `
-            --disable-interactivity
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warning "SDK cleanup failed with exit code $LASTEXITCODE; GitHub will discard the hosted VM."
+        try {
+            & $wingetPath uninstall `
+                --id $packageId `
+                --exact `
+                --source winget `
+                --silent `
+                --accept-source-agreements `
+                --disable-interactivity
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warning "SDK cleanup failed with exit code $LASTEXITCODE; GitHub will discard the hosted VM."
+            }
+        }
+        catch {
+            Write-Warning (
+                "SDK cleanup failed: $($_.Exception.Message) " +
+                'GitHub will discard the hosted VM.')
         }
     }
 }
