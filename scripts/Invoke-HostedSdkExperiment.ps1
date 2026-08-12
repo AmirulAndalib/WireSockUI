@@ -553,15 +553,24 @@ finally {
     Remove-HostedExperimentDirectory -Path $msiRoot
     if ($installedSdk) {
         try {
-            & $wingetPath uninstall `
-                --id $packageId `
-                --exact `
-                --source winget `
-                --silent `
-                --accept-source-agreements `
-                --disable-interactivity
-            if ($LASTEXITCODE -ne 0) {
-                Write-Warning "SDK cleanup failed with exit code $LASTEXITCODE; GitHub will discard the hosted VM."
+            $cleanupProcess = Start-Process `
+                -FilePath $wingetPath `
+                -ArgumentList @(
+                    'uninstall',
+                    '--id', $packageId,
+                    '--exact',
+                    '--source', 'winget',
+                    '--silent',
+                    '--accept-source-agreements',
+                    '--disable-interactivity'
+                ) `
+                -Wait `
+                -PassThru `
+                -NoNewWindow
+            if ($cleanupProcess.ExitCode -ne 0) {
+                Write-Warning (
+                    "SDK cleanup failed with exit code $($cleanupProcess.ExitCode); " +
+                    'GitHub will discard the hosted VM.')
             }
         }
         catch {
