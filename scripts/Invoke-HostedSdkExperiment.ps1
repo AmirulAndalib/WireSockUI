@@ -1,7 +1,11 @@
 #requires -Version 7.0
 
 [CmdletBinding()]
-param()
+param(
+    [Parameter(Mandatory = $true)]
+    [ValidateSet('x86', 'x64', 'ARM64')]
+    [string] $Platform
+)
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -10,8 +14,26 @@ $expectedRepository = 'wiresock/WireSockUI'
 $expectedRef = 'refs/heads/main'
 $packageId = 'NTKERNEL.WireSockVPNClientCLI'
 $packageVersion = '3.4.8'
+$normalizedPlatform = switch ($Platform.ToLowerInvariant()) {
+    'x86' { 'x86' }
+    'x64' { 'x64' }
+    'arm64' { 'ARM64' }
+    default { throw "Unsupported hosted SDK platform '$Platform'." }
+}
+$wingetArchitecture = $normalizedPlatform.ToLowerInvariant()
+$packageInstallerSha256ByArchitecture = @{
+    x86 = '53C8B434482043B2EB734D05595FB357CE87460DC60F49C79F57011D655539B0'
+    x64 = 'ABFEEBDC645DE36B95FABBED00C7FDB0BF4D0C68C5518608450619C61876D33E'
+    arm64 = '62F641A19C2D4A89CE58BA4C0539166982FB89373AEF3C87B66FEA33E26DB311'
+}
 $packageInstallerSha256 =
-    'ABFEEBDC645DE36B95FABBED00C7FDB0BF4D0C68C5518608450619C61876D33E'
+    $packageInstallerSha256ByArchitecture[$wingetArchitecture]
+$expectedRunnerArchitecture = if ($normalizedPlatform -ceq 'ARM64') {
+    [Runtime.InteropServices.Architecture]::Arm64
+}
+else {
+    [Runtime.InteropServices.Architecture]::X64
+}
 $wingetClientModuleVersion = '1.29.280'
 $experimentVersion = '1.0.0'
 $repositoryRoot = [IO.Path]::GetFullPath(
@@ -28,7 +50,7 @@ $testProjectPath = Join-Path `
     'WireSockUI.Tests\WireSockUI.Tests.csproj'
 $publishedPayloadPath = Join-Path `
     $repositoryRoot `
-    'bin\x64\Release\net472-windows\publish'
+    "bin\$normalizedPlatform\Release\net472-windows\publish"
 $workflowSecurityScriptPath = Join-Path `
     $PSScriptRoot `
     'Test-WorkflowSecurity.ps1'
@@ -72,6 +94,53 @@ function Assert-SdkInstallerExitCode {
         return
     }
     throw "$Operation failed with exit code $ExitCode."
+}
+
+function Get-PortableExecutablePlatform {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Path
+    )
+
+    $stream = [IO.File]::Open(
+        $Path,
+        [IO.FileMode]::Open,
+        [IO.FileAccess]::Read,
+        [IO.FileShare]::Read)
+    try {
+        if ($stream.Length -lt 64) {
+            throw "Portable executable '$Path' is truncated."
+        }
+        $reader = [IO.BinaryReader]::new($stream)
+        try {
+            if ($reader.ReadUInt16() -ne 0x5a4d) {
+                throw "Portable executable '$Path' has no DOS header."
+            }
+            $stream.Position = 0x3c
+            [UInt32] $peOffset = $reader.ReadUInt32()
+            if ($peOffset -gt $stream.Length - 6) {
+                throw "Portable executable '$Path' has an invalid PE offset."
+            }
+            $stream.Position = $peOffset
+            if ($reader.ReadUInt32() -ne 0x00004550) {
+                throw "Portable executable '$Path' has no PE signature."
+            }
+            switch ($reader.ReadUInt16()) {
+                0x014c { return 'x86' }
+                0x8664 { return 'x64' }
+                0xaa64 { return 'ARM64' }
+                default {
+                    throw "Portable executable '$Path' has an unsupported machine type."
+                }
+            }
+        }
+        finally {
+            $reader.Dispose()
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
 }
 
 function Remove-HostedExperimentDirectory {
@@ -346,8 +415,10 @@ if ($env:GITHUB_ACTIONS -cne 'true' -or
 }
 if (-not [Environment]::Is64BitOperatingSystem -or
     [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne
-        [Runtime.InteropServices.Architecture]::X64) {
-    throw 'The initial hosted SDK experiment requires an x64 Windows runner.'
+        $expectedRunnerArchitecture) {
+    throw (
+        "The $normalizedPlatform hosted SDK experiment requires a native " +
+        "$expectedRunnerArchitecture Windows runner.")
 }
 if ([string]::IsNullOrWhiteSpace($env:RUNNER_TEMP) -or
     [string]::IsNullOrWhiteSpace($env:GITHUB_WORKSPACE)) {
@@ -395,18 +466,21 @@ if ($preexistingLibraries.Count -ne 0) {
 
 $installedSdk = $false
 $profileRoot = Join-Path $env:ProgramData (
-    'WireSockUI-HostedSdkExperiment-' + [Guid]::NewGuid().ToString('N'))
+    "WireSockUI-HostedSdkExperiment-$normalizedPlatform-" +
+    [Guid]::NewGuid().ToString('N'))
 $downloadRoot = Join-Path $env:RUNNER_TEMP (
-    'WireSockUI-HostedSdkExperiment-Sdk-' + [Guid]::NewGuid().ToString('N'))
+    "WireSockUI-HostedSdkExperiment-Sdk-$normalizedPlatform-" +
+    [Guid]::NewGuid().ToString('N'))
 $msiRoot = Join-Path $env:RUNNER_TEMP (
-    'WireSockUI-HostedSdkExperiment-Msi-' + [Guid]::NewGuid().ToString('N'))
+    "WireSockUI-HostedSdkExperiment-Msi-$normalizedPlatform-" +
+    [Guid]::NewGuid().ToString('N'))
 try {
     [void](New-Item -ItemType Directory -Path $downloadRoot)
     & $wingetPath download `
         --id $packageId `
         --exact `
         --version $packageVersion `
-        --architecture x64 `
+        --architecture $wingetArchitecture `
         --source winget `
         --download-directory $downloadRoot `
         --skip-license `
@@ -453,25 +527,34 @@ try {
         $signature = Get-AuthenticodeSignature -FilePath $candidate
         if ($signature.Status -eq
             [Management.Automation.SignatureStatus]::Valid) {
-            $libraryPath = $candidate
-            break
+            $candidatePlatform = Get-PortableExecutablePlatform -Path $candidate
+            if ($candidatePlatform -ceq $normalizedPlatform) {
+                $libraryPath = $candidate
+                break
+            }
+            Write-Warning (
+                "Ignoring signed SDK library '$candidate' for " +
+                "$candidatePlatform while testing $normalizedPlatform.")
+            continue
         }
         Write-Warning (
             "Ignoring SDK library '$candidate' with Authenticode status " +
             "'$($signature.Status)'.")
     }
     if ([string]::IsNullOrWhiteSpace($libraryPath)) {
-        throw 'The SDK installer registered no Authenticode-valid wgbooster.dll candidate.'
+        throw (
+            "The SDK installer registered no Authenticode-valid " +
+            "$normalizedPlatform wgbooster.dll candidate.")
     }
     Write-Host "Validated signed SDK library '$libraryPath'."
 
     $profiles = New-HostedSdkProfiles -Directory $profileRoot
 
     dotnet restore $solutionPath `
-        /p:Platform=x64 `
+        /p:Platform=$normalizedPlatform `
         --locked-mode `
         -m:1
-    Assert-LastExitCode -Operation 'Restoring the x64 solution'
+    Assert-LastExitCode -Operation "Restoring the $normalizedPlatform solution"
     dotnet restore $installerProjectPath `
         --locked-mode
     Assert-LastExitCode -Operation 'Restoring the installer toolchain'
@@ -481,16 +564,17 @@ try {
         --framework net472-windows `
         --no-restore `
         --no-self-contained `
-        /p:Platform=x64 `
+        /p:Platform=$normalizedPlatform `
         /p:UseSharedCompilation=false `
         /p:Version=$experimentVersion `
         /p:Repository=$expectedRepository `
         /p:RestoreLockedMode=true `
         -m:1
-    Assert-LastExitCode -Operation 'Publishing the x64 WireSockUI candidate'
+    Assert-LastExitCode `
+        -Operation "Publishing the $normalizedPlatform WireSockUI candidate"
 
     & $buildMsiScriptPath `
-        -Platform x64 `
+        -Platform $normalizedPlatform `
         -Version $experimentVersion `
         -Flavor no-uwp `
         -PayloadDirectory $publishedPayloadPath `
@@ -517,18 +601,19 @@ try {
         --configuration Release `
         --framework net472-windows `
         --no-restore `
-        /p:Platform=x64 `
+        /p:Platform=$normalizedPlatform `
         /p:UseSharedCompilation=false `
         -- `
         --sdk-synthetic-integration
-    Assert-LastExitCode -Operation 'Running the real x64 SDK lifecycle smoke test'
+    Assert-LastExitCode `
+        -Operation "Running the real $normalizedPlatform SDK lifecycle smoke test"
 
     if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_STEP_SUMMARY)) {
         Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value @(
-            '### Hosted WireSock SDK experiment passed',
+            "### Hosted WireSock SDK $normalizedPlatform experiment passed",
             '',
-            "- Installed WinGet package ``$packageId`` version ``$packageVersion``.",
-            '- Built and installation-tested the x64 no-UWP WireSockUI MSI.',
+            "- Installed the $normalizedPlatform WinGet package ``$packageId`` version ``$packageVersion``.",
+            "- Built and installation-tested the $normalizedPlatform no-UWP WireSockUI MSI.",
             '- Passed synthetic transparent, virtual-adapter, network-lock, and Amnezia SDK lifecycle checks without asserting external connectivity.'
         )
     }
