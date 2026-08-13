@@ -38,6 +38,12 @@ $packageInstallerUri =
     $packageInstallerUriByArchitecture[$packageArchitecture]
 $packageInstallerSha256 =
     $packageInstallerSha256ByArchitecture[$packageArchitecture]
+if ($null -eq $packageInstallerUri -or
+    $packageInstallerSha256 -cnotmatch '\A[0-9A-F]{64}\z') {
+    throw (
+        "No complete audited SDK installer metadata exists for " +
+        "architecture '$packageArchitecture'.")
+}
 $expectedRunnerArchitecture = if ($normalizedPlatform -ceq 'ARM64') {
     [Runtime.InteropServices.Architecture]::Arm64
 }
@@ -596,11 +602,9 @@ finally {
                 -Wait `
                 -PassThru `
                 -NoNewWindow
-            if ($cleanupProcess.ExitCode -ne 0) {
-                Write-Warning (
-                    "SDK cleanup failed with exit code $($cleanupProcess.ExitCode); " +
-                    'GitHub will discard the hosted VM.')
-            }
+            Assert-SdkInstallerExitCode `
+                -ExitCode $cleanupProcess.ExitCode `
+                -Operation "Uninstalling $packageId $packageVersion"
         }
         catch {
             Write-Warning (
