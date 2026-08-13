@@ -24,7 +24,7 @@ $productionWorkflowDigests = @{
     # explicit and subject to focused trust-boundary review.
     'ci.yml' = '0842c00818f27240941bb914c8cef7a0871054db899ac60fb0e647ef2900e1d6'
     'hosted-sdk-experiment.yml' =
-        'aaebba5fefcdbb9f46432cc8a5617126baeb490ddfcb8d498d990aff280089b6'
+        '29153638030180f4e3c35c927e861c945b32f3f32f668974cdafedb99deed741'
     'main.yml' = '5cacdadaec0b2ad9e1d6125ee4cd76c48d55ff5770d0685e11b350d9df4d4014'
     'release-signing.yml' =
         '88b3e309933fdc767ac5aeed1cbd70ce849eab8041529241355f64ed8be3d99c'
@@ -959,7 +959,7 @@ if (Test-Path -LiteralPath $hostedSdkExperimentPath -PathType Leaf) {
             "- cron: '17 5 * * 1'",
             'cancel-in-progress: true',
             "runs-on: `${{ matrix.platform == 'ARM64' && 'windows-11-arm' || 'windows-latest' }}",
-            "platform: ['x86', 'x64', 'ARM64']",
+            "platform: ['x64', 'ARM64']",
             'ref: ${{ needs.authorize.outputs.trusted_sha }}',
             'TEST_PLATFORM: ${{ matrix.platform }}',
             'run: ./scripts/Invoke-HostedSdkExperiment.ps1 -Platform $env:TEST_PLATFORM')) {

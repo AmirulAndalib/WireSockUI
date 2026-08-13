@@ -71,7 +71,7 @@ jobs:
         shell: pwsh
         env:
           TRUSTED_SHA: ${{ steps.authorize.outputs.trusted_sha }}
-        run: Write-Host "Authorized x86, x64, and ARM64 hosted SDK validation for protected revision '$env:TRUSTED_SHA'."
+        run: Write-Host "Authorized x64 and ARM64 hosted SDK validation for protected revision '$env:TRUSTED_SHA'."
 
   hosted-sdk:
     name: hosted-sdk (${{ matrix.platform }})
@@ -81,7 +81,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: ['x86', 'x64', 'ARM64']
+        platform: ['x64', 'ARM64']
     steps:
       - name: Checkout authorized experiment revision
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
