@@ -13,7 +13,8 @@ Set-StrictMode -Version Latest
 $expectedRepository = 'wiresock/WireSockUI'
 $expectedRef = 'refs/heads/main'
 $packageId = 'NTKERNEL.WireSockVPNClientCLI'
-$packageVersion = '3.4.8'
+$packageManifestVersion = '3.4.8'
+$packageInstallerReleaseVersion = '3.4.8.1'
 $normalizedPlatform = switch ($Platform.ToLowerInvariant()) {
     'x64' { 'x64' }
     'arm64' { 'ARM64' }
@@ -24,11 +25,11 @@ $packageInstallerUriByArchitecture = @{
     x64 = [Uri](
         'https://wiresock.net/_api/download-release.php?' +
         'product=wiresock-secure-connect-sdk&platform=x64&' +
-        'version=3.4.8.1&channel=winget')
+        "version=$packageInstallerReleaseVersion&channel=winget")
     arm64 = [Uri](
         'https://wiresock.net/_api/download-release.php?' +
         'product=wiresock-secure-connect-sdk&platform=ARM64&' +
-        'version=3.4.8.1&channel=winget')
+        "version=$packageInstallerReleaseVersion&channel=winget")
 }
 $packageInstallerSha256ByArchitecture = @{
     x64 = 'ABFEEBDC645DE36B95FABBED00C7FDB0BF4D0C68C5518608450619C61876D33E'
@@ -452,7 +453,7 @@ try {
     Invoke-WebRequest `
         -Uri $packageInstallerUri `
         -OutFile $sdkInstallerPath `
-        -MaximumRedirection 5
+        -MaximumRedirection 0
     $installerHash = (
         Get-FileHash -LiteralPath $sdkInstallerPath -Algorithm SHA256
     ).Hash
@@ -472,7 +473,9 @@ try {
         -PassThru
     Assert-SdkInstallerExitCode `
         -ExitCode $installerProcess.ExitCode `
-        -Operation "Installing $packageId $packageVersion"
+        -Operation (
+            "Installing $packageId manifest $packageManifestVersion " +
+            "release $packageInstallerReleaseVersion")
     $installedSdk = $true
 
     $libraries = @(Wait-WireSockSdkLibraries)
@@ -566,7 +569,10 @@ try {
         Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value @(
             "### Hosted WireSock SDK $normalizedPlatform experiment passed",
             '',
-            "- Installed the audited $normalizedPlatform ``$packageId`` version ``$packageVersion`` SDK artifact.",
+            (
+                "- Installed the audited $normalizedPlatform ``$packageId`` " +
+                "manifest version ``$packageManifestVersion`` " +
+                "(installer release ``$packageInstallerReleaseVersion``)."),
             "- Built and installation-tested the $normalizedPlatform no-UWP WireSockUI MSI.",
             '- Passed synthetic transparent, virtual-adapter, network-lock, and Amnezia SDK lifecycle checks without asserting external connectivity.'
         )
@@ -604,7 +610,9 @@ finally {
                 -NoNewWindow
             Assert-SdkInstallerExitCode `
                 -ExitCode $cleanupProcess.ExitCode `
-                -Operation "Uninstalling $packageId $packageVersion"
+                -Operation (
+                    "Uninstalling $packageId manifest $packageManifestVersion " +
+                    "release $packageInstallerReleaseVersion")
         }
         catch {
             Write-Warning (
