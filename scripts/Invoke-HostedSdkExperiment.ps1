@@ -3,7 +3,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('x86', 'x64', 'ARM64')]
+    [ValidateSet('x64', 'ARM64')]
     [string] $Platform
 )
 
@@ -13,28 +13,44 @@ Set-StrictMode -Version Latest
 $expectedRepository = 'wiresock/WireSockUI'
 $expectedRef = 'refs/heads/main'
 $packageId = 'NTKERNEL.WireSockVPNClientCLI'
-$packageVersion = '3.4.8'
+$packageManifestVersion = '3.4.8'
+$packageInstallerReleaseVersion = '3.4.8.1'
 $normalizedPlatform = switch ($Platform.ToLowerInvariant()) {
-    'x86' { 'x86' }
     'x64' { 'x64' }
     'arm64' { 'ARM64' }
     default { throw "Unsupported hosted SDK platform '$Platform'." }
 }
-$wingetArchitecture = $normalizedPlatform.ToLowerInvariant()
+$packageArchitecture = $normalizedPlatform.ToLowerInvariant()
+$packageInstallerUriByArchitecture = @{
+    x64 = [Uri](
+        'https://wiresock.net/_api/download-release.php?' +
+        'product=wiresock-secure-connect-sdk&platform=x64&' +
+        "version=$packageInstallerReleaseVersion&channel=winget")
+    arm64 = [Uri](
+        'https://wiresock.net/_api/download-release.php?' +
+        'product=wiresock-secure-connect-sdk&platform=ARM64&' +
+        "version=$packageInstallerReleaseVersion&channel=winget")
+}
 $packageInstallerSha256ByArchitecture = @{
-    x86 = '53C8B434482043B2EB734D05595FB357CE87460DC60F49C79F57011D655539B0'
     x64 = 'ABFEEBDC645DE36B95FABBED00C7FDB0BF4D0C68C5518608450619C61876D33E'
     arm64 = '62F641A19C2D4A89CE58BA4C0539166982FB89373AEF3C87B66FEA33E26DB311'
 }
+$packageInstallerUri =
+    $packageInstallerUriByArchitecture[$packageArchitecture]
 $packageInstallerSha256 =
-    $packageInstallerSha256ByArchitecture[$wingetArchitecture]
+    $packageInstallerSha256ByArchitecture[$packageArchitecture]
+if ($null -eq $packageInstallerUri -or
+    $packageInstallerSha256 -cnotmatch '\A[0-9A-F]{64}\z') {
+    throw (
+        "No complete audited SDK installer metadata exists for " +
+        "architecture '$packageArchitecture'.")
+}
 $expectedRunnerArchitecture = if ($normalizedPlatform -ceq 'ARM64') {
     [Runtime.InteropServices.Architecture]::Arm64
 }
 else {
     [Runtime.InteropServices.Architecture]::X64
 }
-$wingetClientModuleVersion = '1.29.280'
 $experimentVersion = '1.0.0'
 $repositoryRoot = [IO.Path]::GetFullPath(
     (Split-Path -Parent $PSScriptRoot))
@@ -163,50 +179,6 @@ function Remove-HostedExperimentDirectory {
             "Temporary directory cleanup failed for '$Path': " +
             "$($_.Exception.Message) GitHub will discard the hosted VM.")
     }
-}
-
-function Get-WinGetExecutable {
-    $command = Get-Command winget.exe -ErrorAction SilentlyContinue
-    if ($null -ne $command) {
-        return $command.Source
-    }
-
-    Write-Host 'WinGet is not preinstalled; bootstrapping the Microsoft client.'
-    Install-PackageProvider `
-        -Name NuGet `
-        -Scope CurrentUser `
-        -Force |
-        Out-Null
-    Install-Module `
-        -Name Microsoft.WinGet.Client `
-        -RequiredVersion $wingetClientModuleVersion `
-        -Repository PSGallery `
-        -Scope CurrentUser `
-        -AcceptLicense `
-        -AllowClobber `
-        -Force
-    Repair-WinGetPackageManager -AllUsers -Force
-
-    $command = Get-Command winget.exe -ErrorAction SilentlyContinue
-    if ($null -ne $command) {
-        return $command.Source
-    }
-
-    $appInstaller = @(
-        Get-AppxPackage `
-            -AllUsers `
-            -Name Microsoft.DesktopAppInstaller |
-            Sort-Object Version -Descending
-    ) | Select-Object -First 1
-    if ($null -eq $appInstaller) {
-        throw 'WinGet bootstrap completed without registering Microsoft.DesktopAppInstaller.'
-    }
-
-    $wingetPath = Join-Path $appInstaller.InstallLocation 'winget.exe'
-    if (-not (Test-Path -LiteralPath $wingetPath -PathType Leaf)) {
-        throw "WinGet executable '$wingetPath' was not found after bootstrap."
-    }
-    return $wingetPath
 }
 
 function Get-WireSockSdkLibraries {
@@ -455,9 +427,6 @@ if ($headSha -cne $env:GITHUB_SHA) {
 }
 
 & $workflowSecurityScriptPath -RequireProductionContracts
-$wingetPath = Get-WinGetExecutable
-& $wingetPath --version
-Assert-LastExitCode -Operation 'Inspecting the WinGet version'
 
 $preexistingLibraries = @(Get-WireSockSdkLibraries)
 if ($preexistingLibraries.Count -ne 0) {
@@ -474,51 +443,39 @@ $downloadRoot = Join-Path $env:RUNNER_TEMP (
 $msiRoot = Join-Path $env:RUNNER_TEMP (
     "WireSockUI-HostedSdkExperiment-Msi-$normalizedPlatform-" +
     [Guid]::NewGuid().ToString('N'))
+$sdkInstallerPath = Join-Path $downloadRoot 'wiresock-sdk-installer.exe'
 try {
     [void](New-Item -ItemType Directory -Path $downloadRoot)
-    & $wingetPath download `
-        --id $packageId `
-        --exact `
-        --version $packageVersion `
-        --architecture $wingetArchitecture `
-        --source winget `
-        --download-directory $downloadRoot `
-        --skip-license `
-        --accept-package-agreements `
-        --accept-source-agreements `
-        --disable-interactivity
-    Assert-LastExitCode -Operation "Downloading $packageId $packageVersion"
-
-    $installers = @(
-        Get-ChildItem `
-            -LiteralPath $downloadRoot `
-            -Recurse `
-            -File `
-            -Filter '*.exe'
-    )
-    if ($installers.Count -ne 1) {
-        throw "Expected one downloaded SDK installer; found $($installers.Count)."
+    if ($packageInstallerUri.Scheme -cne 'https' -or
+        $packageInstallerUri.Host -cne 'wiresock.net') {
+        throw "Refusing unaudited SDK installer URI '$packageInstallerUri'."
     }
+    Invoke-WebRequest `
+        -Uri $packageInstallerUri `
+        -OutFile $sdkInstallerPath `
+        -MaximumRedirection 0
     $installerHash = (
-        Get-FileHash -LiteralPath $installers[0].FullName -Algorithm SHA256
+        Get-FileHash -LiteralPath $sdkInstallerPath -Algorithm SHA256
     ).Hash
     if ($installerHash -cne $packageInstallerSha256) {
         throw "SDK installer digest '$installerHash' does not match the audited WinGet manifest."
     }
-    $installerSignature = Get-AuthenticodeSignature -FilePath $installers[0].FullName
+    $installerSignature = Get-AuthenticodeSignature -FilePath $sdkInstallerPath
     if ($installerSignature.Status -ne
         [Management.Automation.SignatureStatus]::Valid) {
         throw "SDK installer has Authenticode status '$($installerSignature.Status)'."
     }
 
     $installerProcess = Start-Process `
-        -FilePath $installers[0].FullName `
+        -FilePath $sdkInstallerPath `
         -ArgumentList @('/S', '/NCRC') `
         -Wait `
         -PassThru
     Assert-SdkInstallerExitCode `
         -ExitCode $installerProcess.ExitCode `
-        -Operation "Installing $packageId $packageVersion"
+        -Operation (
+            "Installing $packageId manifest $packageManifestVersion " +
+            "release $packageInstallerReleaseVersion")
     $installedSdk = $true
 
     $libraries = @(Wait-WireSockSdkLibraries)
@@ -612,7 +569,10 @@ try {
         Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value @(
             "### Hosted WireSock SDK $normalizedPlatform experiment passed",
             '',
-            "- Installed the $normalizedPlatform WinGet package ``$packageId`` version ``$packageVersion``.",
+            (
+                "- Installed the audited $normalizedPlatform ``$packageId`` " +
+                "manifest version ``$packageManifestVersion`` " +
+                "(installer release ``$packageInstallerReleaseVersion``)."),
             "- Built and installation-tested the $normalizedPlatform no-UWP WireSockUI MSI.",
             '- Passed synthetic transparent, virtual-adapter, network-lock, and Amnezia SDK lifecycle checks without asserting external connectivity.'
         )
@@ -634,29 +594,25 @@ finally {
         }
     }
     Remove-HostedExperimentDirectory -Path $profileRoot
-    Remove-HostedExperimentDirectory -Path $downloadRoot
     Remove-HostedExperimentDirectory -Path $msiRoot
-    if ($installedSdk) {
+    if ($installedSdk -and
+        (Test-Path -LiteralPath $sdkInstallerPath -PathType Leaf)) {
         try {
             $cleanupProcess = Start-Process `
-                -FilePath $wingetPath `
+                -FilePath $sdkInstallerPath `
                 -ArgumentList @(
-                    'uninstall',
-                    '--id', $packageId,
-                    '--exact',
-                    '--source', 'winget',
-                    '--silent',
-                    '--accept-source-agreements',
-                    '--disable-interactivity'
+                    '/uninstall',
+                    '/quiet',
+                    '/norestart'
                 ) `
                 -Wait `
                 -PassThru `
                 -NoNewWindow
-            if ($cleanupProcess.ExitCode -ne 0) {
-                Write-Warning (
-                    "SDK cleanup failed with exit code $($cleanupProcess.ExitCode); " +
-                    'GitHub will discard the hosted VM.')
-            }
+            Assert-SdkInstallerExitCode `
+                -ExitCode $cleanupProcess.ExitCode `
+                -Operation (
+                    "Uninstalling $packageId manifest $packageManifestVersion " +
+                    "release $packageInstallerReleaseVersion")
         }
         catch {
             Write-Warning (
@@ -664,4 +620,5 @@ finally {
                 'GitHub will discard the hosted VM.')
         }
     }
+    Remove-HostedExperimentDirectory -Path $downloadRoot
 }
