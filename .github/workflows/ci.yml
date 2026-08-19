@@ -397,7 +397,9 @@ jobs:
           ./scripts/MsiTest.KnownFolders.Tests.ps1
 
   msi-transition-smoke:
-    needs: publish
+    needs:
+      - publish
+      - version
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
@@ -418,6 +420,24 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Application restore failed.' }
           dotnet restore WireSockUI.Installer/WireSockUI.Installer.wixproj --locked-mode
           if ($LASTEXITCODE -ne 0) { throw 'Installer restore failed.' }
+
+      - name: Resolve MSI transition versions
+        shell: pwsh
+        env:
+          BASELINE_VERSION: ${{ needs.version.outputs.value }}
+        run: |
+          if ($env:BASELINE_VERSION -cnotmatch '\A(?<major>[0-9]+)\.(?<minor>[0-9]+)\.(?<patch>[0-9]+)\z') {
+            throw "Baseline version '$env:BASELINE_VERSION' is not canonical."
+          }
+          $nextPatch = [uint32]$Matches.patch + 1
+          if ($nextPatch -gt 65535) {
+            throw 'The MSI transition target exceeds the Windows Installer patch limit.'
+          }
+          $currentVersion = "$($Matches.major).$($Matches.minor).$nextPatch"
+          "BASELINE_VERSION=$env:BASELINE_VERSION" |
+            Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "CURRENT_VERSION=$currentVersion" |
+            Out-File $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Download baseline x64 UWP MSI
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -443,7 +463,7 @@ jobs:
             --no-restore `
             /p:Platform=x64 `
             /p:UseSharedCompilation=false `
-            /p:Version=1.0.1 `
+            /p:Version="$env:CURRENT_VERSION" `
             /p:Repository="$env:SOURCE_REPOSITORY" `
             -m:1
           if ($LASTEXITCODE -ne 0) { throw 'Current no-UWP publish failed.' }
@@ -455,7 +475,7 @@ jobs:
             --no-restore `
             /p:Platform=x64 `
             /p:UseSharedCompilation=false `
-            /p:Version=1.0.1 `
+            /p:Version="$env:CURRENT_VERSION" `
             /p:Repository="$env:SOURCE_REPOSITORY" `
             -m:1
           if ($LASTEXITCODE -ne 0) { throw 'Current UWP publish failed.' }
@@ -466,7 +486,7 @@ jobs:
           $output = Join-Path $env:GITHUB_WORKSPACE 'current-msis'
           ./scripts/Build-Msi.ps1 `
             -Platform x64 `
-            -Version 1.0.1 `
+            -Version $env:CURRENT_VERSION `
             -Flavor no-uwp `
             -PayloadDirectory './bin/x64/Release/net472-windows/publish' `
             -OutputDirectory $output `
@@ -475,7 +495,7 @@ jobs:
 
           ./scripts/Build-Msi.ps1 `
             -Platform x64 `
-            -Version 1.0.1 `
+            -Version $env:CURRENT_VERSION `
             -Flavor uwp `
             -PayloadDirectory './bin/x64/Release UWP/net472-windows/publish' `
             -OutputDirectory $output `
@@ -486,13 +506,13 @@ jobs:
         shell: pwsh
         run: |
           ./scripts/Test-MsiTransitions.ps1 `
-            -BaselineX64UwpMsiPath './baseline-x64-uwp/WireSockUI-1.0.0-win-x64-uwp.msi' `
-            -BaselineX64UwpValidationMetadataPath './baseline-x64-uwp/WireSockUI-1.0.0-win-x64-uwp.msi.validation.json' `
-            -CurrentX64NoUwpMsiPath './current-msis/WireSockUI-1.0.1-win-x64-no-uwp.msi' `
-            -CurrentX64NoUwpValidationMetadataPath './current-msis/WireSockUI-1.0.1-win-x64-no-uwp.msi.validation.json' `
-            -CurrentX64UwpMsiPath './current-msis/WireSockUI-1.0.1-win-x64-uwp.msi' `
-            -CurrentX64UwpValidationMetadataPath './current-msis/WireSockUI-1.0.1-win-x64-uwp.msi.validation.json' `
-            -BaselineX86NoUwpMsiPath './baseline-x86-no-uwp/WireSockUI-1.0.0-win-x86-no-uwp.msi' `
-            -BaselineX86NoUwpValidationMetadataPath './baseline-x86-no-uwp/WireSockUI-1.0.0-win-x86-no-uwp.msi.validation.json' `
+            -BaselineX64UwpMsiPath "./baseline-x64-uwp/WireSockUI-$env:BASELINE_VERSION-win-x64-uwp.msi" `
+            -BaselineX64UwpValidationMetadataPath "./baseline-x64-uwp/WireSockUI-$env:BASELINE_VERSION-win-x64-uwp.msi.validation.json" `
+            -CurrentX64NoUwpMsiPath "./current-msis/WireSockUI-$env:CURRENT_VERSION-win-x64-no-uwp.msi" `
+            -CurrentX64NoUwpValidationMetadataPath "./current-msis/WireSockUI-$env:CURRENT_VERSION-win-x64-no-uwp.msi.validation.json" `
+            -CurrentX64UwpMsiPath "./current-msis/WireSockUI-$env:CURRENT_VERSION-win-x64-uwp.msi" `
+            -CurrentX64UwpValidationMetadataPath "./current-msis/WireSockUI-$env:CURRENT_VERSION-win-x64-uwp.msi.validation.json" `
+            -BaselineX86NoUwpMsiPath "./baseline-x86-no-uwp/WireSockUI-$env:BASELINE_VERSION-win-x86-no-uwp.msi" `
+            -BaselineX86NoUwpValidationMetadataPath "./baseline-x86-no-uwp/WireSockUI-$env:BASELINE_VERSION-win-x86-no-uwp.msi.validation.json" `
             -EphemeralMachine `
             -AllowUnsignedPayload
