@@ -234,6 +234,7 @@ namespace WireSockUI.Tests
                 { "WireSock manager bounds native log backpressure", WireSockManagerBoundsNativeLogBackpressure },
                 { "WireSock manager bounds retained log records", WireSockManagerBoundsRetainedLogRecords },
                 { "UI log buffering coalesces and bounds dispatch", UiLogBufferingCoalescesAndBoundsDispatch },
+                { "UI log presentation filters noisy native records", UiLogPresentationFiltersNoisyNativeRecords },
                 { "Visible log storage overwrites without unbounded growth", VisibleLogStorageOverwritesWithoutGrowth },
                 { "Diagnostic logging redacts credentials", DiagnosticLoggingRedactsCredentials },
                 { "Diagnostic logging bounds oversized records", DiagnosticLoggingBoundsOversizedRecords },
@@ -6539,6 +6540,43 @@ namespace WireSockUI.Tests
                 AssertEqual(1, messagesAfterScheduleFailure.Count);
                 AssertEqual("after-schedule-failure", messagesAfterScheduleFailure[0].Message);
             }
+        }
+
+        private static void UiLogPresentationFiltersNoisyNativeRecords()
+        {
+            var error = WireguardBoosterExports.WgbLogLevel.Error;
+            var warning = WireguardBoosterExports.WgbLogLevel.Warning;
+            var info = WireguardBoosterExports.WgbLogLevel.Info;
+            var debug = WireguardBoosterExports.WgbLogLevel.Debug;
+
+            AssertFalse(UiLogMessagePresentation.ShouldDisplay(
+                    "{\"message\":\"[FILTER]: UDP : 10.0.0.1:5000 -> 8.8.8.8:443\"}", error),
+                "Error logging should suppress SDK filter traffic that is classified as debug output.");
+            AssertFalse(UiLogMessagePresentation.ShouldDisplay("[WARN]: retrying", error),
+                "Error logging should suppress warning output.");
+            AssertFalse(UiLogMessagePresentation.ShouldDisplay(
+                    "{ \"level\": \"info\", \"message\": \"connected\" }", error),
+                "Error logging should suppress structured info output.");
+            AssertTrue(UiLogMessagePresentation.ShouldDisplay("[ERROR]: tunnel failed", error),
+                "Error logging should retain explicitly classified errors.");
+            AssertTrue(UiLogMessagePresentation.ShouldDisplay("Unable to query tunnel state", error),
+                "Unclassified manager diagnostics should remain visible rather than hiding possible errors.");
+
+            AssertTrue(UiLogMessagePresentation.ShouldDisplay("[WARNING]: retrying", warning),
+                "Warning logging should retain warning output.");
+            AssertFalse(UiLogMessagePresentation.ShouldDisplay("[INFO]: connected", warning),
+                "Warning logging should suppress info output.");
+            AssertTrue(UiLogMessagePresentation.ShouldDisplay("[INFO]: connected", info),
+                "Info logging should retain info output.");
+            AssertFalse(UiLogMessagePresentation.ShouldDisplay("[DEBUG]: packet", info),
+                "Info logging should suppress debug output.");
+            AssertTrue(UiLogMessagePresentation.ShouldDisplay("[FILTER]: packet", debug),
+                "Debug logging should retain filter output.");
+
+            AssertEqual("line\n\"quoted\"", UiLogMessagePresentation.FormatForDisplay(
+                "{\"message\":\"line\\n\\\"quoted\\\"\"}"));
+            const string malformed = "{\"message\":\"unterminated}";
+            AssertEqual(malformed, UiLogMessagePresentation.FormatForDisplay(malformed));
         }
 
         private static void VisibleLogStorageOverwritesWithoutGrowth()
