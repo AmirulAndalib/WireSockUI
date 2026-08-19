@@ -51,9 +51,13 @@ $expectedRunnerArchitecture = if ($normalizedPlatform -ceq 'ARM64') {
 else {
     [Runtime.InteropServices.Architecture]::X64
 }
-$experimentVersion = '1.0.0'
 $repositoryRoot = [IO.Path]::GetFullPath(
     (Split-Path -Parent $PSScriptRoot))
+$versionResolverPath = Join-Path `
+    $PSScriptRoot `
+    'Resolve-BuildVersion.ps1'
+$experimentVersion = & $versionResolverPath `
+    -RepositoryRoot $repositoryRoot
 $solutionPath = Join-Path $repositoryRoot 'WireSockUI.sln'
 $installerProjectPath = Join-Path `
     $repositoryRoot `

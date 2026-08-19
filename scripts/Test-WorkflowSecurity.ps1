@@ -24,8 +24,8 @@ $productionWorkflowDigests = @{
     # explicit and subject to focused trust-boundary review.
     'ci.yml' = '7a432f3293de70fc3c6306ae4375e600e39d0f7b6322ee3fe5163c5eca7fcce2'
     'hosted-sdk-experiment.yml' =
-        '29153638030180f4e3c35c927e861c945b32f3f32f668974cdafedb99deed741'
-    'main.yml' = '5cacdadaec0b2ad9e1d6125ee4cd76c48d55ff5770d0685e11b350d9df4d4014'
+        'bf33b7604f89031f7030f791d2dbaa87df9c16b6ef5e7a6d45eca60eb17d7e79'
+    'main.yml' = '81f94e720f5ddff209936e4f1c59e4c119d46351f3ab4dc1c1891f820aff5cdd'
     'release-signing.yml' =
         '88b3e309933fdc767ac5aeed1cbd70ce849eab8041529241355f64ed8be3d99c'
     'sdk-contract-drift.yml' =
