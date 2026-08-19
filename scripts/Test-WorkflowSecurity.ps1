@@ -22,7 +22,7 @@ $productionWorkflowDigests = @{
     # These are intentionally exact contracts for production control flow. A
     # digest is not an authenticity mechanism; it makes every workflow change
     # explicit and subject to focused trust-boundary review.
-    'ci.yml' = '0842c00818f27240941bb914c8cef7a0871054db899ac60fb0e647ef2900e1d6'
+    'ci.yml' = 'a1962b2be95622bcd67ce2e4f4bf8bc537dcaf2b352600e9543ec31078ef696d'
     'hosted-sdk-experiment.yml' =
         '29153638030180f4e3c35c927e861c945b32f3f32f668974cdafedb99deed741'
     'main.yml' = '5cacdadaec0b2ad9e1d6125ee4cd76c48d55ff5770d0685e11b350d9df4d4014'
@@ -35,7 +35,7 @@ $productionWorkflowDigests = @{
     'sdk-integration.yml' =
         '64cf1be4a6ffe9779aadabb1fa4c887736e3cd55940291aea92da32c0771b849'
     'unsigned-release-candidate.yml' =
-        'b21287315891c9102852c153071ffb6e3e7c057a72a3abfd235507c81afb018d'
+        '4aeb2466b5b2086c88285046503bf1b5ed83bcccc9da1b9946d4cde6324a7ff4'
 }
 $forbiddenShellSourcePattern = (
     '(?i)(?:' +

@@ -2,12 +2,6 @@ name: Unsigned internal release candidate
 
 on:
   workflow_dispatch:
-    inputs:
-      version:
-        description: Canonical three-field MSI version for the internal candidate
-        required: true
-        default: 1.0.0
-        type: string
 
 permissions:
   actions: read
@@ -23,7 +17,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       trusted_sha: ${{ steps.authorize.outputs.trusted_sha }}
-      version: ${{ steps.authorize.outputs.version }}
+      version: ${{ steps.version.outputs.version }}
     steps:
       - name: Authorize current protected main tip and green prerequisites
         id: authorize
@@ -32,7 +26,6 @@ jobs:
           CI_WORKFLOW: ci.yml
           EVENT_NAME: ${{ github.event_name }}
           HOSTED_SDK_WORKFLOW: hosted-sdk-experiment.yml
-          RC_VERSION: ${{ inputs.version }}
           RELEASE_API_URL: ${{ github.api_url }}
           RELEASE_REF: ${{ github.ref }}
           RELEASE_REPOSITORY: ${{ github.repository }}
@@ -52,16 +45,6 @@ jobs:
           if ($env:RELEASE_SHA -cnotmatch '\A[0-9a-f]{40}\z') {
             throw 'The candidate commit ID is malformed.'
           }
-          if ($env:RC_VERSION -cnotmatch '\A(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\z') {
-            throw "Version '$env:RC_VERSION' must be a canonical three-field MSI version."
-          }
-          $versionParts = @($env:RC_VERSION.Split('.') | ForEach-Object { [uint32]$_ })
-          if ($versionParts[0] -gt 255 -or
-              $versionParts[1] -gt 255 -or
-              $versionParts[2] -gt 65535) {
-            throw "Version '$env:RC_VERSION' exceeds MSI version limits."
-          }
-
           $headers = @{
             Accept = 'application/vnd.github+json'
             Authorization = "Bearer $env:GH_TOKEN"
@@ -94,12 +77,25 @@ jobs:
           }
 
           "trusted_sha=$env:RELEASE_SHA" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
-          "version=$env:RC_VERSION" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Checkout authorized main history
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+          ref: ${{ steps.authorize.outputs.trusted_sha }}
+          persist-credentials: false
+
+      - name: Resolve authorized build version
+        id: version
+        shell: pwsh
+        run: |
+          $version = ./scripts/Resolve-BuildVersion.ps1
+          "version=$version" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Report unsigned internal-only boundary
         shell: pwsh
         env:
-          RC_VERSION: ${{ steps.authorize.outputs.version }}
+          RC_VERSION: ${{ steps.version.outputs.version }}
           TRUSTED_SHA: ${{ steps.authorize.outputs.trusted_sha }}
         run: |
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value '### Unsigned internal release candidate'

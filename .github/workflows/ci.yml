@@ -10,6 +10,30 @@ permissions:
   contents: read
 
 jobs:
+  version:
+    name: resolve build version
+    runs-on: windows-latest
+    timeout-minutes: 5
+    outputs:
+      value: ${{ steps.version.outputs.value }}
+    steps:
+      - name: Checkout complete first-parent history
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve and test repository build version
+        id: version
+        shell: pwsh
+        run: |
+          ./scripts/Test-BuildVersion.Tests.ps1
+          $version = ./scripts/Resolve-BuildVersion.ps1
+          "value=$version" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Add-Content `
+            -LiteralPath $env:GITHUB_STEP_SUMMARY `
+            -Value "Build version: $version"
+
   dependency-audit:
     runs-on: windows-latest
     timeout-minutes: 15
@@ -68,6 +92,7 @@ jobs:
 
   test:
     name: test (${{ matrix.configuration }}, ${{ matrix.platform }})
+    needs: version
     runs-on: ${{ matrix.platform == 'ARM64' && 'windows-11-arm' || 'windows-latest' }}
     timeout-minutes: 30
     strategy:
@@ -101,6 +126,7 @@ jobs:
 
       - name: Run focused tests
         env:
+          BUILD_VERSION: ${{ needs.version.outputs.value }}
           TEST_CONFIGURATION: ${{ matrix.configuration }}
           TEST_PLATFORM: ${{ matrix.platform }}
         run: >
@@ -110,6 +136,7 @@ jobs:
           --no-restore
           /p:Platform=$env:TEST_PLATFORM
           /p:UseSharedCompilation=false
+          /p:Version=$env:BUILD_VERSION
 
   sdk-integration:
     # Never execute pull-request code on the elevated SDK runners. Pull requests use
@@ -225,6 +252,7 @@ jobs:
       - dependency-audit
       - sdk-contract
       - test
+      - version
     strategy:
       fail-fast: false
       matrix:
@@ -258,6 +286,7 @@ jobs:
         env:
           BUILD_CONFIGURATION: ${{ matrix.configuration }}
           BUILD_PLATFORM: ${{ matrix.platform }}
+          BUILD_VERSION: ${{ needs.version.outputs.value }}
           SOURCE_REPOSITORY: ${{ github.repository }}
         run: >
           dotnet publish WireSockUI/WireSockUI.csproj
@@ -266,7 +295,7 @@ jobs:
           --no-self-contained
           /p:Platform="$env:BUILD_PLATFORM"
           /p:UseSharedCompilation=false
-          /p:Version=1.0.0
+          /p:Version="$env:BUILD_VERSION"
           /p:Repository="$env:SOURCE_REPOSITORY"
           /p:RestoreLockedMode=true
           -m:1
@@ -275,6 +304,7 @@ jobs:
         if: matrix.configuration == 'Release' && matrix.platform == 'x86'
         shell: pwsh
         env:
+          BUILD_VERSION: ${{ needs.version.outputs.value }}
           SOURCE_REPOSITORY: ${{ github.repository }}
         run: |
           $targetDirectory = Join-Path $env:GITHUB_WORKSPACE `
@@ -292,7 +322,7 @@ jobs:
             --no-self-contained `
             /p:Platform=x86 `
             /p:UseSharedCompilation=false `
-            /p:Version=1.0.0 `
+            /p:Version="$env:BUILD_VERSION" `
             /p:Repository="$env:SOURCE_REPOSITORY" `
             /p:RestoreLockedMode=true `
             -m:1
@@ -315,12 +345,13 @@ jobs:
         env:
           BUILD_CONFIGURATION: ${{ matrix.configuration }}
           BUILD_PLATFORM: ${{ matrix.platform }}
+          BUILD_VERSION: ${{ needs.version.outputs.value }}
           INSTALLER_FLAVOR: ${{ matrix.installer_flavor }}
         run: |
           $output = Join-Path $env:GITHUB_WORKSPACE 'ci-msi'
           ./scripts/Build-Msi.ps1 `
             -Platform $env:BUILD_PLATFORM `
-            -Version 1.0.0 `
+            -Version $env:BUILD_VERSION `
             -Flavor $env:INSTALLER_FLAVOR `
             -PayloadDirectory "./bin/$env:BUILD_PLATFORM/$env:BUILD_CONFIGURATION/net472-windows/publish" `
             -OutputDirectory $output `
