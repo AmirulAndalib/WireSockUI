@@ -45,8 +45,9 @@ namespace WireSockUI.Forms
             this.cmiExit = new System.Windows.Forms.ToolStripMenuItem();
             this.tabControl = new System.Windows.Forms.TabControl();
             this.tabPageTunnels = new System.Windows.Forms.TabPage();
-            this.btnEdit = new System.Windows.Forms.Button();
+            this.splitTunnels = new System.Windows.Forms.SplitContainer();
             this.pnlLeft = new System.Windows.Forms.Panel();
+            this.layoutProfiles = new System.Windows.Forms.TableLayoutPanel();
             this.mnuToolbar = new System.Windows.Forms.ToolStrip();
             this.ddmAddTunnel = new System.Windows.Forms.ToolStripSplitButton();
             this.mniImportTunnel = new System.Windows.Forms.ToolStripMenuItem();
@@ -57,6 +58,7 @@ namespace WireSockUI.Forms
             this.mniSettings = new System.Windows.Forms.ToolStripButton();
             this.lstProfiles = new System.Windows.Forms.ListView();
             this.colProfile = ((System.Windows.Forms.ColumnHeader)(new System.Windows.Forms.ColumnHeader()));
+            this.layoutDetails = new System.Windows.Forms.TableLayoutPanel();
             this.pnlRight = new System.Windows.Forms.Panel();
             this.gbxState = new System.Windows.Forms.GroupBox();
             this.layoutState = new System.Windows.Forms.TableLayoutPanel();
@@ -64,8 +66,10 @@ namespace WireSockUI.Forms
             this.layoutPeer = new System.Windows.Forms.TableLayoutPanel();
             this.gbxInterface = new System.Windows.Forms.GroupBox();
             this.layoutInterface = new System.Windows.Forms.TableLayoutPanel();
+            this.pnlProfileActions = new System.Windows.Forms.FlowLayoutPanel();
+            this.btnEdit = new System.Windows.Forms.Button();
             this.tabPageLog = new System.Windows.Forms.TabPage();
-            this.lstLog = new System.Windows.Forms.ListView();
+            this.lstLog = new WireSockUI.Forms.BufferedListView();
             this.colTimestamp = ((System.Windows.Forms.ColumnHeader)(new System.Windows.Forms.ColumnHeader()));
             this.colMessage = ((System.Windows.Forms.ColumnHeader)(new System.Windows.Forms.ColumnHeader()));
             this.resControls = new WireSockUI.Extensions.ControlTextExtender();
@@ -73,12 +77,19 @@ namespace WireSockUI.Forms
             this.mnuContext.SuspendLayout();
             this.tabControl.SuspendLayout();
             this.tabPageTunnels.SuspendLayout();
+            ((System.ComponentModel.ISupportInitialize)(this.splitTunnels)).BeginInit();
+            this.splitTunnels.Panel1.SuspendLayout();
+            this.splitTunnels.Panel2.SuspendLayout();
+            this.splitTunnels.SuspendLayout();
             this.pnlLeft.SuspendLayout();
+            this.layoutProfiles.SuspendLayout();
             this.mnuToolbar.SuspendLayout();
+            this.layoutDetails.SuspendLayout();
             this.pnlRight.SuspendLayout();
             this.gbxState.SuspendLayout();
             this.gbxPeer.SuspendLayout();
             this.gbxInterface.SuspendLayout();
+            this.pnlProfileActions.SuspendLayout();
             this.tabPageLog.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)(this.resControls)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.resMenu)).BeginInit();
@@ -192,53 +203,83 @@ namespace WireSockUI.Forms
             this.tabControl.Location = new System.Drawing.Point(0, 0);
             this.tabControl.Name = "tabControl";
             this.resControls.SetResourceKey(this.tabControl, null);
+            this.tabControl.Padding = new System.Drawing.Point(14, 4);
             this.tabControl.SelectedIndex = 0;
-            this.tabControl.Size = new System.Drawing.Size(601, 495);
+            this.tabControl.Size = new System.Drawing.Size(820, 560);
             this.tabControl.TabIndex = 12;
             // 
             // tabPageTunnels
             // 
-            this.tabPageTunnels.BackColor = System.Drawing.Color.Transparent;
-            this.tabPageTunnels.Controls.Add(this.btnEdit);
-            this.tabPageTunnels.Controls.Add(this.pnlLeft);
-            this.tabPageTunnels.Controls.Add(this.pnlRight);
+            this.tabPageTunnels.BackColor = System.Drawing.SystemColors.Control;
+            this.tabPageTunnels.Controls.Add(this.splitTunnels);
             this.tabPageTunnels.Location = new System.Drawing.Point(4, 22);
             this.tabPageTunnels.Name = "tabPageTunnels";
-            this.tabPageTunnels.Padding = new System.Windows.Forms.Padding(3);
+            this.tabPageTunnels.Padding = new System.Windows.Forms.Padding(10);
             this.resControls.SetResourceKey(this.tabPageTunnels, "TabPageTunnels");
-            this.tabPageTunnels.Size = new System.Drawing.Size(593, 469);
+            this.tabPageTunnels.Size = new System.Drawing.Size(812, 534);
             this.tabPageTunnels.TabIndex = 0;
             this.tabPageTunnels.Text = "Tunnels";
             // 
-            // btnEdit
+            // splitTunnels
             // 
-            this.btnEdit.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
-            this.btnEdit.Enabled = false;
-            this.btnEdit.Location = new System.Drawing.Point(522, 446);
-            this.btnEdit.Name = "btnEdit";
-            this.resControls.SetResourceKey(this.btnEdit, "ButtonEdit");
-            this.btnEdit.Size = new System.Drawing.Size(64, 22);
-            this.btnEdit.TabIndex = 16;
-            this.btnEdit.Text = "Edit";
-            this.btnEdit.UseVisualStyleBackColor = true;
-            this.btnEdit.Click += new System.EventHandler(this.OnEditProfileClick);
+            this.splitTunnels.BackColor = System.Drawing.SystemColors.ControlDark;
+            this.splitTunnels.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
+            this.splitTunnels.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.splitTunnels.Location = new System.Drawing.Point(10, 10);
+            this.splitTunnels.Name = "splitTunnels";
+            //
+            // splitTunnels.Panel1
+            //
+            this.splitTunnels.Panel1.BackColor = System.Drawing.SystemColors.Window;
+            this.splitTunnels.Panel1.Controls.Add(this.pnlLeft);
+            this.splitTunnels.Panel1MinSize = 180;
+            //
+            // splitTunnels.Panel2
+            //
+            this.splitTunnels.Panel2.BackColor = System.Drawing.SystemColors.Control;
+            this.splitTunnels.Panel2.Controls.Add(this.layoutDetails);
+            this.splitTunnels.Panel2.Padding = new System.Windows.Forms.Padding(10, 0, 0, 0);
+            this.splitTunnels.Panel2MinSize = 320;
+            this.splitTunnels.Size = new System.Drawing.Size(792, 514);
+            this.splitTunnels.SplitterDistance = 220;
+            this.splitTunnels.SplitterWidth = 6;
+            this.splitTunnels.TabIndex = 0;
             // 
             // pnlLeft
             // 
-            this.pnlLeft.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
-            | System.Windows.Forms.AnchorStyles.Left)));
-            this.pnlLeft.Controls.Add(this.mnuToolbar);
-            this.pnlLeft.Controls.Add(this.lstProfiles);
+            this.pnlLeft.Controls.Add(this.layoutProfiles);
+            this.pnlLeft.Dock = System.Windows.Forms.DockStyle.Fill;
             this.pnlLeft.Location = new System.Drawing.Point(0, 0);
+            this.pnlLeft.Margin = new System.Windows.Forms.Padding(0);
             this.pnlLeft.Name = "pnlLeft";
+            this.pnlLeft.Padding = new System.Windows.Forms.Padding(0);
             this.resControls.SetResourceKey(this.pnlLeft, null);
-            this.pnlLeft.Size = new System.Drawing.Size(177, 473);
+            this.pnlLeft.Size = new System.Drawing.Size(218, 512);
             this.pnlLeft.TabIndex = 18;
             // 
+            // layoutProfiles
+            //
+            this.layoutProfiles.BackColor = System.Drawing.SystemColors.Window;
+            this.layoutProfiles.ColumnCount = 1;
+            this.layoutProfiles.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
+            this.layoutProfiles.Controls.Add(this.lstProfiles, 0, 0);
+            this.layoutProfiles.Controls.Add(this.mnuToolbar, 0, 1);
+            this.layoutProfiles.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.layoutProfiles.Location = new System.Drawing.Point(0, 0);
+            this.layoutProfiles.Margin = new System.Windows.Forms.Padding(0);
+            this.layoutProfiles.Name = "layoutProfiles";
+            this.layoutProfiles.Padding = new System.Windows.Forms.Padding(0);
+            this.layoutProfiles.RowCount = 2;
+            this.layoutProfiles.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
+            this.layoutProfiles.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
+            this.layoutProfiles.Size = new System.Drawing.Size(218, 512);
+            this.layoutProfiles.TabIndex = 0;
+            //
             // mnuToolbar
             // 
             this.mnuToolbar.AllowMerge = false;
-            this.mnuToolbar.Dock = System.Windows.Forms.DockStyle.Bottom;
+            this.mnuToolbar.BackColor = System.Drawing.SystemColors.Window;
+            this.mnuToolbar.Dock = System.Windows.Forms.DockStyle.Fill;
             this.mnuToolbar.GripStyle = System.Windows.Forms.ToolStripGripStyle.Hidden;
             this.mnuToolbar.ImageScalingSize = new System.Drawing.Size(32, 32);
             this.mnuToolbar.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
@@ -247,11 +288,12 @@ namespace WireSockUI.Forms
             this.mniDeleteTunnel,
             this.tbSep2,
             this.mniSettings});
-            this.mnuToolbar.Location = new System.Drawing.Point(0, 448);
+            this.mnuToolbar.Location = new System.Drawing.Point(0, 483);
+            this.mnuToolbar.Margin = new System.Windows.Forms.Padding(0);
             this.mnuToolbar.Name = "mnuToolbar";
-            this.mnuToolbar.Padding = new System.Windows.Forms.Padding(0);
+            this.mnuToolbar.Padding = new System.Windows.Forms.Padding(4, 2, 4, 2);
             this.resControls.SetResourceKey(this.mnuToolbar, null);
-            this.mnuToolbar.Size = new System.Drawing.Size(177, 25);
+            this.mnuToolbar.Size = new System.Drawing.Size(218, 29);
             this.mnuToolbar.TabIndex = 20;
             this.mnuToolbar.Text = "toolStrip1";
             // 
@@ -328,23 +370,22 @@ namespace WireSockUI.Forms
             // lstProfiles
             // 
             this.lstProfiles.Activation = System.Windows.Forms.ItemActivation.TwoClick;
-            this.lstProfiles.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
-            | System.Windows.Forms.AnchorStyles.Left) 
-            | System.Windows.Forms.AnchorStyles.Right)));
             this.lstProfiles.BorderStyle = System.Windows.Forms.BorderStyle.None;
             this.lstProfiles.Columns.AddRange(new System.Windows.Forms.ColumnHeader[] {
             this.colProfile});
-            this.lstProfiles.Font = new System.Drawing.Font("Microsoft Sans Serif", 9.75F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
+            this.lstProfiles.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.lstProfiles.Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
             this.lstProfiles.FullRowSelect = true;
             this.lstProfiles.HeaderStyle = System.Windows.Forms.ColumnHeaderStyle.None;
             this.lstProfiles.HideSelection = false;
             this.lstProfiles.LabelWrap = false;
-            this.lstProfiles.Location = new System.Drawing.Point(0, 0);
+            this.lstProfiles.Location = new System.Drawing.Point(4, 4);
+            this.lstProfiles.Margin = new System.Windows.Forms.Padding(4);
             this.lstProfiles.MultiSelect = false;
             this.lstProfiles.Name = "lstProfiles";
             this.resControls.SetResourceKey(this.lstProfiles, null);
             this.lstProfiles.ShowGroups = false;
-            this.lstProfiles.Size = new System.Drawing.Size(179, 473);
+            this.lstProfiles.Size = new System.Drawing.Size(210, 475);
             this.lstProfiles.SmallImageList = this.imlProfiles;
             this.lstProfiles.Sorting = System.Windows.Forms.SortOrder.Ascending;
             this.lstProfiles.TabIndex = 19;
@@ -357,30 +398,51 @@ namespace WireSockUI.Forms
             // 
             this.colProfile.Width = 190;
             // 
+            // layoutDetails
+            //
+            this.layoutDetails.BackColor = System.Drawing.SystemColors.Control;
+            this.layoutDetails.ColumnCount = 1;
+            this.layoutDetails.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
+            this.layoutDetails.Controls.Add(this.pnlRight, 0, 0);
+            this.layoutDetails.Controls.Add(this.pnlProfileActions, 0, 1);
+            this.layoutDetails.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.layoutDetails.Location = new System.Drawing.Point(10, 0);
+            this.layoutDetails.Margin = new System.Windows.Forms.Padding(0);
+            this.layoutDetails.Name = "layoutDetails";
+            this.layoutDetails.Padding = new System.Windows.Forms.Padding(0);
+            this.layoutDetails.RowCount = 2;
+            this.layoutDetails.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
+            this.layoutDetails.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 40F));
+            this.layoutDetails.Size = new System.Drawing.Size(554, 512);
+            this.layoutDetails.TabIndex = 0;
+            //
             // pnlRight
             // 
-            this.pnlRight.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
-            | System.Windows.Forms.AnchorStyles.Left) 
-            | System.Windows.Forms.AnchorStyles.Right)));
             this.pnlRight.AutoScroll = true;
+            this.pnlRight.BackColor = System.Drawing.SystemColors.Window;
             this.pnlRight.Controls.Add(this.gbxState);
             this.pnlRight.Controls.Add(this.gbxPeer);
             this.pnlRight.Controls.Add(this.gbxInterface);
-            this.pnlRight.Location = new System.Drawing.Point(182, 3);
+            this.pnlRight.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.pnlRight.Location = new System.Drawing.Point(0, 0);
+            this.pnlRight.Margin = new System.Windows.Forms.Padding(0);
             this.pnlRight.Name = "pnlRight";
+            this.pnlRight.Padding = new System.Windows.Forms.Padding(8);
             this.resControls.SetResourceKey(this.pnlRight, null);
-            this.pnlRight.Size = new System.Drawing.Size(408, 445);
+            this.pnlRight.Size = new System.Drawing.Size(554, 472);
             this.pnlRight.TabIndex = 17;
             // 
             // gbxState
             // 
             this.gbxState.AutoSize = true;
+            this.gbxState.BackColor = System.Drawing.SystemColors.Window;
             this.gbxState.Controls.Add(this.layoutState);
             this.gbxState.Dock = System.Windows.Forms.DockStyle.Top;
-            this.gbxState.Location = new System.Drawing.Point(0, 38);
+            this.gbxState.Location = new System.Drawing.Point(8, 46);
             this.gbxState.Name = "gbxState";
+            this.gbxState.Padding = new System.Windows.Forms.Padding(10, 6, 10, 8);
             this.resControls.SetResourceKey(this.gbxState, "PanelState");
-            this.gbxState.Size = new System.Drawing.Size(408, 19);
+            this.gbxState.Size = new System.Drawing.Size(538, 31);
             this.gbxState.TabIndex = 16;
             this.gbxState.TabStop = false;
             this.gbxState.Text = "State";
@@ -389,25 +451,29 @@ namespace WireSockUI.Forms
             // layoutState
             // 
             this.layoutState.AutoSize = true;
+            this.layoutState.BackColor = System.Drawing.SystemColors.Window;
             this.layoutState.ColumnCount = 2;
-            this.layoutState.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 110F));
-            this.layoutState.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 449F));
+            this.layoutState.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 120F));
+            this.layoutState.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
             this.layoutState.Dock = System.Windows.Forms.DockStyle.Top;
-            this.layoutState.Location = new System.Drawing.Point(3, 16);
+            this.layoutState.Location = new System.Drawing.Point(10, 19);
             this.layoutState.Name = "layoutState";
+            this.layoutState.Padding = new System.Windows.Forms.Padding(0, 4, 0, 2);
             this.resControls.SetResourceKey(this.layoutState, null);
-            this.layoutState.Size = new System.Drawing.Size(402, 0);
+            this.layoutState.Size = new System.Drawing.Size(518, 6);
             this.layoutState.TabIndex = 0;
             // 
             // gbxPeer
             // 
             this.gbxPeer.AutoSize = true;
+            this.gbxPeer.BackColor = System.Drawing.SystemColors.Window;
             this.gbxPeer.Controls.Add(this.layoutPeer);
             this.gbxPeer.Dock = System.Windows.Forms.DockStyle.Top;
-            this.gbxPeer.Location = new System.Drawing.Point(0, 19);
+            this.gbxPeer.Location = new System.Drawing.Point(8, 31);
             this.gbxPeer.Name = "gbxPeer";
+            this.gbxPeer.Padding = new System.Windows.Forms.Padding(10, 6, 10, 8);
             this.resControls.SetResourceKey(this.gbxPeer, "PanelPeer");
-            this.gbxPeer.Size = new System.Drawing.Size(408, 19);
+            this.gbxPeer.Size = new System.Drawing.Size(538, 31);
             this.gbxPeer.TabIndex = 15;
             this.gbxPeer.TabStop = false;
             this.gbxPeer.Text = "Peer";
@@ -416,26 +482,30 @@ namespace WireSockUI.Forms
             // layoutPeer
             // 
             this.layoutPeer.AutoSize = true;
+            this.layoutPeer.BackColor = System.Drawing.SystemColors.Window;
             this.layoutPeer.ColumnCount = 2;
-            this.layoutPeer.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 110F));
-            this.layoutPeer.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 449F));
+            this.layoutPeer.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 120F));
+            this.layoutPeer.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
             this.layoutPeer.Dock = System.Windows.Forms.DockStyle.Top;
-            this.layoutPeer.Location = new System.Drawing.Point(3, 16);
+            this.layoutPeer.Location = new System.Drawing.Point(10, 19);
             this.layoutPeer.Name = "layoutPeer";
+            this.layoutPeer.Padding = new System.Windows.Forms.Padding(0, 4, 0, 2);
             this.resControls.SetResourceKey(this.layoutPeer, null);
-            this.layoutPeer.Size = new System.Drawing.Size(402, 0);
+            this.layoutPeer.Size = new System.Drawing.Size(518, 6);
             this.layoutPeer.TabIndex = 0;
             this.layoutPeer.SizeChanged += new System.EventHandler(this.OnLayoutPanelResize);
             // 
             // gbxInterface
             // 
             this.gbxInterface.AutoSize = true;
+            this.gbxInterface.BackColor = System.Drawing.SystemColors.Window;
             this.gbxInterface.Controls.Add(this.layoutInterface);
             this.gbxInterface.Dock = System.Windows.Forms.DockStyle.Top;
-            this.gbxInterface.Location = new System.Drawing.Point(0, 0);
+            this.gbxInterface.Location = new System.Drawing.Point(8, 8);
             this.gbxInterface.Name = "gbxInterface";
+            this.gbxInterface.Padding = new System.Windows.Forms.Padding(10, 6, 10, 8);
             this.resControls.SetResourceKey(this.gbxInterface, null);
-            this.gbxInterface.Size = new System.Drawing.Size(408, 19);
+            this.gbxInterface.Size = new System.Drawing.Size(538, 31);
             this.gbxInterface.TabIndex = 14;
             this.gbxInterface.TabStop = false;
             this.gbxInterface.Text = "Interface: Warp";
@@ -445,29 +515,59 @@ namespace WireSockUI.Forms
             // 
             this.layoutInterface.AutoSize = true;
             this.layoutInterface.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
+            this.layoutInterface.BackColor = System.Drawing.SystemColors.Window;
             this.layoutInterface.ColumnCount = 2;
-            this.layoutInterface.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 70F));
-            this.layoutInterface.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle());
+            this.layoutInterface.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 110F));
+            this.layoutInterface.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
             this.layoutInterface.Dock = System.Windows.Forms.DockStyle.Top;
-            this.layoutInterface.Location = new System.Drawing.Point(3, 16);
+            this.layoutInterface.Location = new System.Drawing.Point(10, 19);
             this.layoutInterface.Name = "layoutInterface";
+            this.layoutInterface.Padding = new System.Windows.Forms.Padding(0, 4, 0, 2);
             this.resControls.SetResourceKey(this.layoutInterface, null);
             this.layoutInterface.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 20F));
-            this.layoutInterface.Size = new System.Drawing.Size(402, 0);
+            this.layoutInterface.Size = new System.Drawing.Size(518, 6);
             this.layoutInterface.TabIndex = 25;
             this.layoutInterface.SizeChanged += new System.EventHandler(this.OnLayoutPanelResize);
             // 
+            // pnlProfileActions
+            //
+            this.pnlProfileActions.BackColor = System.Drawing.SystemColors.Control;
+            this.pnlProfileActions.Controls.Add(this.btnEdit);
+            this.pnlProfileActions.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.pnlProfileActions.FlowDirection = System.Windows.Forms.FlowDirection.RightToLeft;
+            this.pnlProfileActions.Location = new System.Drawing.Point(0, 472);
+            this.pnlProfileActions.Margin = new System.Windows.Forms.Padding(0);
+            this.pnlProfileActions.Name = "pnlProfileActions";
+            this.pnlProfileActions.Padding = new System.Windows.Forms.Padding(0, 8, 0, 0);
+            this.pnlProfileActions.Size = new System.Drawing.Size(554, 40);
+            this.pnlProfileActions.TabIndex = 18;
+            this.pnlProfileActions.WrapContents = false;
+            //
+            // btnEdit
+            //
+            this.btnEdit.Enabled = false;
+            this.btnEdit.Location = new System.Drawing.Point(474, 8);
+            this.btnEdit.Margin = new System.Windows.Forms.Padding(0);
+            this.btnEdit.Name = "btnEdit";
+            this.resControls.SetResourceKey(this.btnEdit, "ButtonEdit");
+            this.btnEdit.Size = new System.Drawing.Size(80, 28);
+            this.btnEdit.TabIndex = 16;
+            this.btnEdit.Text = "Edit";
+            this.btnEdit.UseVisualStyleBackColor = true;
+            this.btnEdit.Click += new System.EventHandler(this.OnEditProfileClick);
+            //
             // tabPageLog
             // 
+            this.tabPageLog.BackColor = System.Drawing.SystemColors.Control;
             this.tabPageLog.Controls.Add(this.lstLog);
             this.tabPageLog.Location = new System.Drawing.Point(4, 22);
             this.tabPageLog.Name = "tabPageLog";
-            this.tabPageLog.Padding = new System.Windows.Forms.Padding(3);
+            this.tabPageLog.Padding = new System.Windows.Forms.Padding(10);
             this.resControls.SetResourceKey(this.tabPageLog, "TabPageLog");
-            this.tabPageLog.Size = new System.Drawing.Size(593, 469);
+            this.tabPageLog.Size = new System.Drawing.Size(812, 534);
             this.tabPageLog.TabIndex = 1;
             this.tabPageLog.Text = "Log";
-            this.tabPageLog.UseVisualStyleBackColor = true;
+            this.tabPageLog.UseVisualStyleBackColor = false;
             // 
             // lstLog
             // 
@@ -478,13 +578,13 @@ namespace WireSockUI.Forms
             this.lstLog.FullRowSelect = true;
             this.lstLog.HeaderStyle = System.Windows.Forms.ColumnHeaderStyle.Nonclickable;
             this.lstLog.HideSelection = false;
-            this.lstLog.Location = new System.Drawing.Point(3, 3);
+            this.lstLog.Location = new System.Drawing.Point(10, 10);
             this.lstLog.MultiSelect = false;
             this.lstLog.Name = "lstLog";
             this.lstLog.OwnerDraw = true;
             this.resControls.SetResourceKey(this.lstLog, null);
             this.lstLog.ShowGroups = false;
-            this.lstLog.Size = new System.Drawing.Size(587, 463);
+            this.lstLog.Size = new System.Drawing.Size(792, 514);
             this.lstLog.TabIndex = 0;
             this.lstLog.UseCompatibleStateImageBehavior = false;
             this.lstLog.View = System.Windows.Forms.View.Details;
@@ -514,10 +614,9 @@ namespace WireSockUI.Forms
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.BackColor = System.Drawing.SystemColors.Control;
-            this.ClientSize = new System.Drawing.Size(601, 495);
+            this.ClientSize = new System.Drawing.Size(820, 560);
             this.Controls.Add(this.tabControl);
-            this.MaximizeBox = false;
-            this.MinimumSize = new System.Drawing.Size(595, 427);
+            this.MinimumSize = new System.Drawing.Size(680, 480);
             this.Name = "FrmMain";
             this.resControls.SetResourceKey(this, "FormMain");
             this.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen;
@@ -527,10 +626,16 @@ namespace WireSockUI.Forms
             this.mnuContext.ResumeLayout(false);
             this.tabControl.ResumeLayout(false);
             this.tabPageTunnels.ResumeLayout(false);
+            this.splitTunnels.Panel1.ResumeLayout(false);
+            this.splitTunnels.Panel2.ResumeLayout(false);
+            ((System.ComponentModel.ISupportInitialize)(this.splitTunnels)).EndInit();
+            this.splitTunnels.ResumeLayout(false);
             this.pnlLeft.ResumeLayout(false);
-            this.pnlLeft.PerformLayout();
+            this.layoutProfiles.ResumeLayout(false);
+            this.layoutProfiles.PerformLayout();
             this.mnuToolbar.ResumeLayout(false);
             this.mnuToolbar.PerformLayout();
+            this.layoutDetails.ResumeLayout(false);
             this.pnlRight.ResumeLayout(false);
             this.pnlRight.PerformLayout();
             this.gbxState.ResumeLayout(false);
@@ -539,6 +644,7 @@ namespace WireSockUI.Forms
             this.gbxPeer.PerformLayout();
             this.gbxInterface.ResumeLayout(false);
             this.gbxInterface.PerformLayout();
+            this.pnlProfileActions.ResumeLayout(false);
             this.tabPageLog.ResumeLayout(false);
             ((System.ComponentModel.ISupportInitialize)(this.resControls)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.resMenu)).EndInit();
@@ -552,11 +658,15 @@ namespace WireSockUI.Forms
         private TabControl tabControl;
         private TabPage tabPageTunnels;
         private TabPage tabPageLog;
+        private SplitContainer splitTunnels;
         private GroupBox gbxInterface;
         private GroupBox gbxPeer;
         private Button btnEdit;
         private Panel pnlRight;
         private Panel pnlLeft;
+        private TableLayoutPanel layoutProfiles;
+        private TableLayoutPanel layoutDetails;
+        private FlowLayoutPanel pnlProfileActions;
         private ToolStrip mnuToolbar;
         private ListView lstProfiles;
         private ColumnHeader colProfile;
@@ -569,7 +679,7 @@ namespace WireSockUI.Forms
         private ToolStripSeparator tbSep2;
         private TableLayoutPanel layoutInterface;
         private TableLayoutPanel layoutPeer;
-        private ListView lstLog;
+        private BufferedListView lstLog;
         private ColumnHeader colTimestamp;
         private ColumnHeader colMessage;
         private GroupBox gbxState;

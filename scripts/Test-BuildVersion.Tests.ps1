@@ -72,6 +72,7 @@ try {
         -Encoding utf8
     Invoke-FixtureGit -Arguments @('add', 'payload.txt')
     Invoke-FixtureGit -Arguments @('commit', '-m', 'Versioning follow-up')
+    Assert-Version -Expected '2.3.1'
     Invoke-FixtureGit -Arguments @('switch', 'main')
     Invoke-FixtureGit -Arguments @(
         'merge',
@@ -94,6 +95,17 @@ try {
         -Encoding utf8
     Invoke-FixtureGit -Arguments @('add', 'payload.txt')
     Invoke-FixtureGit -Arguments @('commit', '-m', 'Feature commit two')
+    Assert-Version -Expected '2.3.2'
+
+    Invoke-FixtureGit -Arguments @('switch', '--detach', 'main')
+    Invoke-FixtureGit -Arguments @(
+        'merge',
+        '--no-ff',
+        '--no-edit',
+        'feature'
+    )
+    Assert-Version -Expected '2.3.2'
+
     Invoke-FixtureGit -Arguments @('switch', 'main')
     Invoke-FixtureGit -Arguments @(
         'merge',

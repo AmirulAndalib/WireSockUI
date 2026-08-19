@@ -57,6 +57,7 @@ namespace WireSockUI.Forms
         private readonly object _uiDispatchSyncRoot = new object();
         private readonly int _uiThreadId = Thread.CurrentThread.ManagedThreadId;
 
+        private int _configuredLogLevel;
         private ConnectionState _currentState = ConnectionState.Disconnected;
         private Task _activeSettingsOperation = Task.CompletedTask;
         private FrmSettings _activeSettingsForm;
@@ -77,6 +78,7 @@ namespace WireSockUI.Forms
         public FrmMain()
         {
             InitializeComponent();
+            ConfigureMainWindowLayout();
 
             lstLog.RetrieveVirtualItem += OnRetrieveVirtualLogItem;
             lstLog.VirtualMode = true;
@@ -86,6 +88,7 @@ namespace WireSockUI.Forms
                 TryScheduleLogDrain,
                 AppendWireSockLogMessages);
             _tunnelLifecycle = new TunnelLifecycleController(OnWireSockLogMessage);
+            Volatile.Write(ref _configuredLogLevel, (int)_tunnelLifecycle.ConfiguredLogLevel);
             _settingsUpdateCoordinator = new SettingsUpdateCoordinator(
                 ApplyLogLevelSettingAsync,
                 ApplyKillSwitchSettingAsync);
@@ -125,6 +128,39 @@ namespace WireSockUI.Forms
 
             // Update the list of available configurations.
             LoadProfiles();
+        }
+
+        private void ConfigureMainWindowLayout()
+        {
+            Font = SystemFonts.MessageBoxFont;
+            lstProfiles.Font = SystemFonts.MessageBoxFont;
+            lstProfiles.SizeChanged += OnProfileListResize;
+
+            ConfigureDetailsGroup(gbxInterface, layoutInterface, 110F);
+            ConfigureDetailsGroup(gbxPeer, layoutPeer, 120F);
+            ConfigureDetailsGroup(gbxState, layoutState, 120F);
+            layoutState.SizeChanged += OnLayoutPanelResize;
+
+            lstLog.BorderStyle = BorderStyle.FixedSingle;
+            lstLog.Font = SystemFonts.MessageBoxFont;
+        }
+
+        private static void ConfigureDetailsGroup(GroupBox groupBox, TableLayoutPanel layout, float labelWidth)
+        {
+            groupBox.BackColor = SystemColors.Window;
+            groupBox.Padding = new Padding(10, 6, 10, 8);
+
+            layout.BackColor = SystemColors.Window;
+            layout.ColumnStyles.Clear();
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, labelWidth));
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            layout.Padding = new Padding(0, 4, 0, 2);
+        }
+
+        private void OnProfileListResize(object sender, EventArgs e)
+        {
+            if (lstProfiles.Columns.Count > 0)
+                lstProfiles.Columns[0].Width = Math.Max(0, lstProfiles.ClientSize.Width - 8);
         }
 
         protected override void OnHandleCreated(EventArgs e)
@@ -2531,14 +2567,16 @@ namespace WireSockUI.Forms
         {
             var stateBeforeUpdate = _currentState;
             var profile = _tunnelLifecycle.ProfileName;
+            var configuredLevel = WireSockManager.ParseLogLevelSetting(logLevel);
             var updateResult = await _tunnelLifecycle.SetLogLevelAsync(
-                WireSockManager.ParseLogLevelSetting(logLevel), NativeQueryTimeoutMilliseconds);
+                configuredLevel, NativeQueryTimeoutMilliseconds);
             updateResult = await AwaitTimedOutNativeOperationAsync(updateResult,
                 "native log-level update", profile, stateBeforeUpdate);
             if (!updateResult.Succeeded)
                 throw new InvalidOperationException(updateResult.Diagnostic ??
                                                     "Unable to update the native log level.");
 
+            Volatile.Write(ref _configuredLogLevel, (int)configuredLevel);
             return true;
         }
 
@@ -2989,6 +3027,21 @@ namespace WireSockUI.Forms
 
         private void OnWireSockLogMessage(WireSockManager.LogMessage logMessage)
         {
+            var configuredLevel = (WgbLogLevel)Volatile.Read(ref _configuredLogLevel);
+            if (!UiLogMessagePresentation.ShouldDisplay(logMessage.Message, configuredLevel))
+                return;
+
+            var displayMessage = UiLogMessagePresentation.FormatForDisplay(logMessage.Message);
+            if (!string.Equals(displayMessage, logMessage.Message, StringComparison.Ordinal))
+            {
+                var timestamp = logMessage.Timestamp;
+                logMessage = new WireSockManager.LogMessage
+                {
+                    Message = displayMessage,
+                    Timestamp = timestamp
+                };
+            }
+
             _uiLogBuffer.Enqueue(logMessage);
         }
 
@@ -3022,12 +3075,16 @@ namespace WireSockUI.Forms
             {
                 lstLog.BeginUpdate();
                 updating = true;
+                var previousCount = _visibleLogMessages.Count;
                 _visibleLogMessages.AddRange(logMessages);
-                lstLog.VirtualListSize = _visibleLogMessages.Count;
-                lstLog.Invalidate();
+                var currentCount = _visibleLogMessages.Count;
+                if (lstLog.VirtualListSize != currentCount)
+                    lstLog.VirtualListSize = currentCount;
+                else
+                    lstLog.Invalidate();
 
-                if (_visibleLogMessages.Count > 0)
-                    lstLog.EnsureVisible(_visibleLogMessages.Count - 1);
+                if (currentCount > 0 && previousCount < currentCount)
+                    lstLog.EnsureVisible(currentCount - 1);
             }
             catch (ObjectDisposedException)
             {
@@ -3118,7 +3175,9 @@ namespace WireSockUI.Forms
                         AutoSize = true,
                         AutoSizeMode = AutoSizeMode.GrowAndShrink,
                         Dock = DockStyle.Left,
+                        Margin = new Padding(0, 6, 0, 2),
                         Name = "btnActivate",
+                        Padding = new Padding(10, 3, 10, 3),
                         Text = Resources.ButtonInactive
                     };
 
@@ -3208,7 +3267,7 @@ namespace WireSockUI.Forms
                     Dock = DockStyle.Fill,
                     Name = $"lbl{name}",
                     Height = 18,
-                    Margin = new Padding(0, 0, 0, 0),
+                    Margin = new Padding(0, 2, 10, 2),
                     Padding = new Padding(0),
                     TextAlign = ContentAlignment.TopRight,
                     Text = $@"{key}:"
@@ -3223,7 +3282,7 @@ namespace WireSockUI.Forms
                         AutoSize = true,
                         AutoSizeMode = AutoSizeMode.GrowAndShrink,
                         Dock = DockStyle.Fill,
-                        Margin = new Padding(0),
+                        Margin = new Padding(0, 2, 0, 2),
                         Padding = new Padding(0)
                     };
 
@@ -3248,7 +3307,7 @@ namespace WireSockUI.Forms
                     panel.Controls.Add(new TextBox
                     {
                         BorderStyle = BorderStyle.None,
-                        BackColor = Color.FromKnownColor(KnownColor.Control),
+                        BackColor = SystemColors.Window,
                         Dock = DockStyle.Fill,
                         Margin = new Padding(0),
                         Multiline = true,
@@ -3265,9 +3324,9 @@ namespace WireSockUI.Forms
                     var textBox = new TextBox
                     {
                         BorderStyle = BorderStyle.None,
-                        BackColor = Color.FromKnownColor(KnownColor.Control),
+                        BackColor = SystemColors.Window,
                         Dock = DockStyle.Fill,
-                        Margin = new Padding(0),
+                        Margin = new Padding(0, 2, 0, 2),
                         Multiline = true,
                         Name = $"txt{name}",
                         Padding = new Padding(0),
@@ -3284,7 +3343,8 @@ namespace WireSockUI.Forms
         private void OnLayoutPanelResize(object sender, EventArgs e)
         {
             var panel = sender as TableLayoutPanel;
-            if (panel != null && panel.Width > 0)
+            if (panel != null && panel.Width > 0 && panel.ColumnStyles.Count > 1 &&
+                panel.ColumnStyles[1].SizeType == SizeType.Absolute)
                 panel.ColumnStyles[1].Width = panel.Width - panel.ColumnStyles[0].Width;
 
             if (panel == null) return;
@@ -3295,11 +3355,12 @@ namespace WireSockUI.Forms
                         textBox.Text,
                         textBox.Font,
                         new Size(
-                            textBox.ClientSize.Width,
-                            textBox.ClientSize.Height),
+                            Math.Max(1, textBox.ClientSize.Width),
+                            int.MaxValue),
                         TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl).Height;
 
-                    textBox.Height = textHeight + 0 + textHeight / textBox.Font.Height;
+                    textBox.Height = Math.Max(textBox.Font.Height + 4,
+                        textHeight + Math.Max(1, textHeight / textBox.Font.Height));
                 }
         }
 

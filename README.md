@@ -87,15 +87,16 @@ Bounded diagnostic logs are written to `%ProgramData%\WireSockUI\Logs\WireSockUI
 
 ```powershell
 dotnet restore WireSockUI.sln -p:Platform=x64 -m:1
-dotnet run --project WireSockUI.Tests\WireSockUI.Tests.csproj --configuration Release --framework net472-windows
-dotnet build WireSockUI.sln --configuration Release -p:Platform=x64 -p:UseSharedCompilation=false -m:1
-dotnet build WireSockUI.sln --configuration "Release UWP" -p:Platform=x64 -p:UseSharedCompilation=false -m:1
-dotnet publish WireSockUI\WireSockUI.csproj --configuration Release --framework net472-windows --no-self-contained --no-restore -p:Platform=x64 -p:UseSharedCompilation=false -m:1
+$version = .\scripts\Resolve-BuildVersion.ps1
+dotnet run --project WireSockUI.Tests\WireSockUI.Tests.csproj --configuration Release --framework net472-windows -p:Version=$version
+dotnet build WireSockUI.sln --configuration Release -p:Platform=x64 -p:UseSharedCompilation=false -p:Version=$version -m:1
+dotnet build WireSockUI.sln --configuration "Release UWP" -p:Platform=x64 -p:UseSharedCompilation=false -p:Version=$version -m:1
+dotnet publish WireSockUI\WireSockUI.csproj --configuration Release --framework net472-windows --no-self-contained --no-restore -p:Platform=x64 -p:UseSharedCompilation=false -p:Version=$version -m:1
 ```
 
 Release builds require the Visual C++ Build Tools and Windows SDK. `scripts\Build-NativeBootstrap.ps1` compiles the architecture-matched `WireSockUI.exe`, embeds the canonical path/size/SHA-256 payload manifest and native application manifest, and verifies the linked manifest and version resources. The managed output is `WireSockUI.Managed.dll`; the native host loads its public hosted entry point in-process under `WireSockUI.exe.config`.
 
-`version.json` defines the major/minor build-version epoch. `scripts\Resolve-BuildVersion.ps1` combines it with the protected branch's first-parent history to produce one canonical `MAJOR.MINOR.BUILD` value. The merge that first introduces the file continues the published `v0.2.8` sequence as `0.2.9`; each later merged pull request increments the build component once, regardless of how many commits the pull request contained. Keep rebase merging disabled: merge commits and squash merges each add exactly one first-parent commit. CI and hosted SDK validation pass that same value to the managed assembly, native launcher, MSI, validation metadata, and artifact names. Run the resolver from a complete Git checkout when a local packaging command needs the current repository version. Official release tags remain an explicit release decision, must use the current resolved version, and use the protected `release-vMAJOR.MINOR.BUILD` namespace.
+`version.json` defines the major/minor build-version epoch. `scripts\Resolve-BuildVersion.ps1` combines it with the protected branch's first-parent history to produce one canonical `MAJOR.MINOR.BUILD` value. On a feature branch or GitHub pull-request merge ref, it treats the complete candidate as one prospective protected-branch change and refuses branches that are not based on the protected tip. The merge that first introduces the file continues the published `v0.2.8` sequence as `0.2.9`; each later merged pull request increments the build component once, regardless of how many commits the pull request contained. Keep rebase merging disabled: merge commits and squash merges each add exactly one first-parent commit. CI and hosted SDK validation pass that same value to the managed assembly, native launcher, MSI, validation metadata, and artifact names. Release builds require this explicit value; unversioned development builds use `0.0.0` and cannot silently claim a release identity. Run the resolver from a complete, current Git checkout when a local packaging command needs the candidate or protected-branch version. Official release tags remain an explicit release decision, must use the current resolved version, and use the protected `release-vMAJOR.MINOR.BUILD` namespace.
 
 Build an MSI only from a completed architecture-specific publish directory after signing its native host. For example:
 

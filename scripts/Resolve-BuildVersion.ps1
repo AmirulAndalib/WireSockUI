@@ -4,7 +4,11 @@
 param(
     [Parameter()]
     [ValidateNotNullOrEmpty()]
-    [string] $RepositoryRoot = (Split-Path -Parent $PSScriptRoot)
+    [string] $RepositoryRoot = (Split-Path -Parent $PSScriptRoot),
+
+    [Parameter()]
+    [AllowEmptyString()]
+    [string] $ProtectedBranchRef = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -62,41 +66,155 @@ $gitDirectory = Join-Path $repositoryPath '.git'
 if (-not (Test-Path -LiteralPath $gitDirectory)) {
     throw "Repository root '$repositoryPath' has no Git metadata."
 }
-$epochOutput = @(& git `
-        -C $repositoryPath `
-        rev-list `
-        --first-parent `
-        --reverse `
-        HEAD `
-        -- `
-        version.json 2>&1)
-if ($LASTEXITCODE -ne 0) {
-    throw "Unable to inspect first-parent version history: $($epochOutput -join ' ')"
-}
-$epochCommits = @(
-    $epochOutput |
-        ForEach-Object { ([string]$_).Trim() } |
-        Where-Object { -not [string]::IsNullOrEmpty($_) }
-)
-if ($epochCommits.Count -lt 1 -or
-    $epochCommits[0] -cnotmatch '\A[0-9a-f]{40,64}\z') {
-    throw 'Git did not identify the first-parent build version epoch.'
+
+function Resolve-GitCommit {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Reference,
+
+        [Parameter()]
+        [switch] $AllowMissing
+    )
+
+    $commitOutput = @(& git `
+            -C $repositoryPath `
+            rev-parse `
+            --verify `
+            "$Reference`^{commit}" 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        if ($AllowMissing) {
+            return $null
+        }
+        throw "Unable to resolve Git reference '$Reference': $($commitOutput -join ' ')"
+    }
+
+    $commit = [string]::Join('', $commitOutput).Trim()
+    if ($commit -cnotmatch '\A[0-9a-f]{40,64}\z') {
+        throw "Git reference '$Reference' resolved to invalid commit '$commit'."
+    }
+    return $commit
 }
 
-$historyOutput = @(& git `
+function Test-VersionConfigurationAtCommit {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Commit
+    )
+
+    & git `
         -C $repositoryPath `
-        rev-list `
-        --count `
-        --first-parent `
-        "$($epochCommits[0])..HEAD" 2>&1)
-if ($LASTEXITCODE -ne 0) {
-    throw "Unable to count builds after the version epoch: $($historyOutput -join ' ')"
+        cat-file `
+        -e `
+        "${Commit}:version.json" 2>$null
+    return $LASTEXITCODE -eq 0
 }
-$historyText = [string]::Join('', $historyOutput).Trim()
-[long] $buildsAfterEpoch = 0
-if ($historyText -cnotmatch '\A[0-9]+\z' -or
-    -not [long]::TryParse($historyText, [ref]$buildsAfterEpoch)) {
-    throw "Git returned an invalid post-epoch history count '$historyText'."
+
+$headCommit = Resolve-GitCommit -Reference 'HEAD'
+if (-not (Test-VersionConfigurationAtCommit -Commit $headCommit)) {
+    throw 'The current commit does not contain version.json.'
+}
+
+if ([string]::IsNullOrWhiteSpace($ProtectedBranchRef)) {
+    $branchOutput = @(& git `
+            -C $repositoryPath `
+            symbolic-ref `
+            --quiet `
+            --short `
+            HEAD 2>&1)
+    $currentBranch = if ($LASTEXITCODE -eq 0) {
+        [string]::Join('', $branchOutput).Trim()
+    }
+    else {
+        ''
+    }
+
+    if ($currentBranch -ceq 'main') {
+        $ProtectedBranchRef = 'HEAD'
+    }
+    elseif ($null -ne (Resolve-GitCommit `
+            -Reference 'refs/remotes/origin/main' `
+            -AllowMissing)) {
+        $ProtectedBranchRef = 'refs/remotes/origin/main'
+    }
+    elseif ($null -ne (Resolve-GitCommit `
+            -Reference 'refs/heads/main' `
+            -AllowMissing)) {
+        $ProtectedBranchRef = 'refs/heads/main'
+    }
+    else {
+        throw (
+            'Unable to locate the protected main branch. Fetch origin/main ' +
+            'or pass -ProtectedBranchRef explicitly.')
+    }
+}
+
+$protectedCommit = Resolve-GitCommit -Reference $ProtectedBranchRef
+$candidateIncrement = 0
+if ($headCommit -cne $protectedCommit) {
+    $mergeBaseOutput = @(& git `
+            -C $repositoryPath `
+            merge-base `
+            $protectedCommit `
+            $headCommit 2>&1)
+    $mergeBase = [string]::Join('', $mergeBaseOutput).Trim()
+    if ($LASTEXITCODE -ne 0 -or $mergeBase -cne $protectedCommit) {
+        throw (
+            "Current commit '$headCommit' is not based on protected tip " +
+            "'$protectedCommit'. Update the branch before resolving its " +
+            'candidate version.')
+    }
+    $candidateIncrement = 1
+}
+
+$protectedHasConfiguration =
+    Test-VersionConfigurationAtCommit -Commit $protectedCommit
+if (-not $protectedHasConfiguration) {
+    if ($candidateIncrement -ne 1) {
+        throw 'The protected commit does not contain version.json.'
+    }
+    $buildsAfterEpoch = 0
+}
+else {
+    $epochOutput = @(& git `
+            -C $repositoryPath `
+            rev-list `
+            --first-parent `
+            --reverse `
+            $protectedCommit `
+            -- `
+            version.json 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to inspect first-parent version history: $($epochOutput -join ' ')"
+    }
+    $epochCommits = @(
+        $epochOutput |
+            ForEach-Object { ([string]$_).Trim() } |
+            Where-Object { -not [string]::IsNullOrEmpty($_) }
+    )
+    if ($epochCommits.Count -lt 1 -or
+        $epochCommits[0] -cnotmatch '\A[0-9a-f]{40,64}\z') {
+        throw 'Git did not identify the first-parent build version epoch.'
+    }
+
+    $historyOutput = @(& git `
+            -C $repositoryPath `
+            rev-list `
+            --count `
+            --first-parent `
+            "$($epochCommits[0])..$protectedCommit" 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to count builds after the version epoch: $($historyOutput -join ' ')"
+    }
+    $historyText = [string]::Join('', $historyOutput).Trim()
+    [long] $protectedBuildsAfterEpoch = 0
+    if ($historyText -cnotmatch '\A[0-9]+\z' -or
+        -not [long]::TryParse(
+            $historyText,
+            [ref]$protectedBuildsAfterEpoch)) {
+        throw "Git returned an invalid post-epoch history count '$historyText'."
+    }
+    $buildsAfterEpoch =
+        $protectedBuildsAfterEpoch + $candidateIncrement
 }
 $buildNumber =
     [long]$configuration.buildNumberStart + $buildsAfterEpoch

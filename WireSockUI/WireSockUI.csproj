@@ -38,7 +38,8 @@
   <!-- Set up assembly metadata -->
   <PropertyGroup>
     <DefineConstants Condition=" $(Configuration.Contains('UWP')) ">$(DefineConstants);WIRESOCKUI_ENABLE_UWP</DefineConstants>
-    <Version Condition=" '$(Version)' == '' ">0.2.9</Version>
+    <WireSockUIVersionWasDefaulted Condition=" '$(Version)' == '' ">true</WireSockUIVersionWasDefaulted>
+    <Version Condition=" '$(Version)' == '' ">0.0.0</Version>
 
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <AssemblyName>WireSockUI.Managed</AssemblyName>
@@ -49,6 +50,12 @@
     <Copyright>Copyright %A9 2023</Copyright>
     <NativeBootstrapDevelopmentArgument Condition="$(Configuration.StartsWith('Debug'))">-DevelopmentBuild</NativeBootstrapDevelopmentArgument>
   </PropertyGroup>
+
+  <Target Name="RequireExplicitReleaseVersion"
+          BeforeTargets="PrepareForBuild"
+          Condition="$(Configuration.StartsWith('Release')) and '$(WireSockUIVersionWasDefaulted)' == 'true' and '$(WireSockUIAllowManagedOnlyBuild)' != 'true' and '$(DesignTimeBuild)' != 'true' and '$(IsCrossTargetingBuild)' != 'true'">
+    <Error Text="Release builds require an explicit /p:Version from scripts/Resolve-BuildVersion.ps1." />
+  </Target>
 
   <ItemGroup>
     <AssemblyAttributes Include="AssemblyMetadata">
