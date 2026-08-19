@@ -192,7 +192,7 @@ namespace WireSockUI.Forms
             using (var windowsIcon = WindowsIcons.GetWindowsIcon(icon, size))
             {
                 if (windowsIcon != null)
-                    imlProfiles.Images.Add(key, windowsIcon);
+                    imlProfiles.Images.AddClonedIcon(key, windowsIcon);
             }
         }
 

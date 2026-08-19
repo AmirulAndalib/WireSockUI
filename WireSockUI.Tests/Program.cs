@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Configuration;
 using System.Diagnostics;
+using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -260,6 +261,7 @@ namespace WireSockUI.Tests
                 { "Curve25519 matches RFC 7748 public-key vectors", Curve25519MatchesRfc7748PublicKeyVectors },
                 { "Curve25519 supports optional signing keys", Curve25519SupportsOptionalSigningKeys },
                 { "Editor validates Amnezia options", EditorValidatesAmneziaOptions },
+                { "Image lists clone icons before delayed handle creation", ImageListsCloneIconsBeforeDelayedHandleCreation },
                 { "WinForms dialogs initialize and dispose on an STA thread", WinFormsDialogsInitializeAndDisposeOnStaThread },
                 { "Settings copies the secured profiles path without shell activation", SettingsCopiesSecuredProfilesPathWithoutShellActivation },
                 { "Editor bounds synchronous syntax highlighting", EditorBoundsSynchronousSyntaxHighlighting },
@@ -7127,6 +7129,31 @@ namespace WireSockUI.Tests
                 "");
             AssertEqual(1, failedLockCleanupApi.DropCount);
             AssertEqual(1, failedLockCleanupApi.ReleaseCount);
+        }
+
+        private static void ImageListsCloneIconsBeforeDelayedHandleCreation()
+        {
+            AssertEqual(
+                ApartmentState.STA.ToString(),
+                Thread.CurrentThread.GetApartmentState().ToString());
+
+            using (var images = new ImageList())
+            {
+                var sourceIcon = new Icon(SystemIcons.Application, new Size(24, 24));
+                try
+                {
+                    images.Images.AddClonedIcon("profile", sourceIcon);
+                }
+                finally
+                {
+                    sourceIcon.Dispose();
+                }
+
+                AssertTrue(images.Handle != IntPtr.Zero,
+                    "Expected delayed ImageList handle creation to succeed after the source icon was disposed.");
+                AssertTrue(images.Images.ContainsKey("profile"),
+                    "Expected the cloned icon to retain its profile key.");
+            }
         }
 
         private static void SdkSyntheticSmokePermitsInactiveTunnel()
