@@ -7,6 +7,7 @@ using System.Security.Principal;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using WireSockUI.Extensions;
 using WireSockUI.Native;
 using WireSockUI.Properties;
 
@@ -182,7 +183,7 @@ namespace WireSockUI.Forms
             const string defaultIconKey = "DefaultIcon";
             var defaultIcon = Resources.ico;
             if (defaultIcon != null)
-                lstProcesses.SmallImageList.Images.Add(defaultIconKey, defaultIcon);
+                lstProcesses.SmallImageList.Images.AddClonedIcon(defaultIconKey, defaultIcon);
 
             foreach (var process in result.Entries)
             {
