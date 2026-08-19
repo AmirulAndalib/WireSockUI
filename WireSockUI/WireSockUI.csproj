@@ -38,7 +38,7 @@
   <!-- Set up assembly metadata -->
   <PropertyGroup>
     <DefineConstants Condition=" $(Configuration.Contains('UWP')) ">$(DefineConstants);WIRESOCKUI_ENABLE_UWP</DefineConstants>
-    <Version Condition=" '$(Version)' == '' ">0.0.1</Version>
+    <Version Condition=" '$(Version)' == '' ">0.2.9</Version>
 
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <AssemblyName>WireSockUI.Managed</AssemblyName>

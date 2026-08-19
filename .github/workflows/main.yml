@@ -107,6 +107,11 @@ jobs:
             throw "Release commit $trustedSha must be the current protected '$env:DEFAULT_BRANCH' tip, not $defaultBranchSha."
           }
 
+          $resolvedVersion = ./scripts/Resolve-BuildVersion.ps1
+          if ($version -cne $resolvedVersion) {
+            throw "Release tag version '$version' does not match protected-tip build version '$resolvedVersion'."
+          }
+
           "trusted_sha=$trustedSha" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
           "trusted_tag_oid=$trustedTagOid" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
           "version=$version" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
