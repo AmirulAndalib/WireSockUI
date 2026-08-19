@@ -34,29 +34,31 @@ namespace WireSockUI.Forms
 
         private static bool TryClassify(string message, out WireguardBoosterExports.WgbLogLevel level)
         {
-            if (Contains(message, "[FILTER]") || Contains(message, "[TRACE]") ||
-                Contains(message, "[DEBUG]"))
+            var normalizedMessage = message?.TrimStart();
+
+            if (StartsWith(normalizedMessage, "[ERROR]") || StartsWith(normalizedMessage, "ERROR:"))
             {
-                level = WireguardBoosterExports.WgbLogLevel.Debug;
+                level = WireguardBoosterExports.WgbLogLevel.Error;
                 return true;
             }
 
-            if (Contains(message, "[INFO]"))
-            {
-                level = WireguardBoosterExports.WgbLogLevel.Info;
-                return true;
-            }
-
-            if (Contains(message, "[WARNING]") || Contains(message, "[WARN]") ||
-                Contains(message, "WARNING:") || Contains(message, "WARN:"))
+            if (StartsWith(normalizedMessage, "[WARNING]") || StartsWith(normalizedMessage, "[WARN]") ||
+                StartsWith(normalizedMessage, "WARNING:") || StartsWith(normalizedMessage, "WARN:"))
             {
                 level = WireguardBoosterExports.WgbLogLevel.Warning;
                 return true;
             }
 
-            if (Contains(message, "[ERROR]") || Contains(message, "ERROR:"))
+            if (StartsWith(normalizedMessage, "[INFO]"))
             {
-                level = WireguardBoosterExports.WgbLogLevel.Error;
+                level = WireguardBoosterExports.WgbLogLevel.Info;
+                return true;
+            }
+
+            if (StartsWith(normalizedMessage, "[TRACE]") || StartsWith(normalizedMessage, "[DEBUG]") ||
+                IsFilterTrafficTrace(normalizedMessage))
+            {
+                level = WireguardBoosterExports.WgbLogLevel.Debug;
                 return true;
             }
 
@@ -81,9 +83,21 @@ namespace WireSockUI.Forms
             }
         }
 
-        private static bool Contains(string message, string value)
+        private static bool IsFilterTrafficTrace(string message)
         {
-            return message?.IndexOf(value, StringComparison.OrdinalIgnoreCase) >= 0;
+            const string filterPrefix = "[FILTER]:";
+            if (!StartsWith(message, filterPrefix))
+                return false;
+
+            var trace = message.Substring(filterPrefix.Length).TrimStart();
+            var hasPacketProtocol = StartsWith(trace, "UDP :") || StartsWith(trace, "TCP :") ||
+                                    StartsWith(trace, "ICMP :") || StartsWith(trace, "ICMPV6 :");
+            return hasPacketProtocol && trace.IndexOf(" -> ", StringComparison.Ordinal) > 0;
+        }
+
+        private static bool StartsWith(string message, string value)
+        {
+            return message?.StartsWith(value, StringComparison.OrdinalIgnoreCase) == true;
         }
 
         private static bool TryMapLevel(string value, out WireguardBoosterExports.WgbLogLevel level)
