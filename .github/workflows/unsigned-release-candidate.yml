@@ -286,6 +286,23 @@ jobs:
           ref: ${{ needs.authorize.outputs.trusted_sha }}
           persist-credentials: false
 
+      - name: Setup pinned dotnet SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          global-json-file: global.json
+
+      - name: Restore locked installer validation toolchain
+        shell: pwsh
+        run: |
+          dotnet restore WireSockUI.Installer/WireSockUI.Installer.wixproj `
+            --locked-mode `
+            -p:NuGetAudit=true `
+            -p:NuGetAuditMode=all `
+            '-warnaserror:NU1901;NU1902;NU1903;NU1904'
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Installer validation toolchain restore or dependency audit failed.'
+          }
+
       - name: Download all matrix candidates
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
