@@ -34,6 +34,8 @@ $productionWorkflowDigests = @{
         '08757634d63467c5181120d97ecfe17c71393cb4238f42508e6a694dcf4c2de7'
     'sdk-integration.yml' =
         '64cf1be4a6ffe9779aadabb1fa4c887736e3cd55940291aea92da32c0771b849'
+    'unsigned-release-candidate.yml' =
+        'b21287315891c9102852c153071ffb6e3e7c057a72a3abfd235507c81afb018d'
 }
 $forbiddenShellSourcePattern = (
     '(?i)(?:' +

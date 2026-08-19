@@ -83,6 +83,11 @@ $productionSdkScheduleWorkflow = Get-Content `
         Join-Path $productionWorkflowDirectory 'sdk-integration-schedule.yml') `
     -Raw `
     -Encoding UTF8
+$productionUnsignedReleaseCandidateWorkflow = Get-Content `
+    -LiteralPath (
+        Join-Path $productionWorkflowDirectory 'unsigned-release-candidate.yml') `
+    -Raw `
+    -Encoding UTF8
 $productionPinMatch = [regex]::Match(
     $productionMainWorkflow,
     'wiresock/WireSockUI/\.github/workflows/' +
@@ -164,7 +169,8 @@ function Invoke-Fixture {
                 'ci.yml',
                 'hosted-sdk-experiment.yml',
                 'sdk-contract-drift.yml',
-                'sdk-integration-schedule.yml')) {
+                'sdk-integration-schedule.yml',
+                'unsigned-release-candidate.yml')) {
             $sourcePath = Join-Path `
                 $productionWorkflowDirectory `
                 $workflowName
@@ -350,6 +356,13 @@ try {
         -AuxiliaryWorkflowOverrides @{
             'sdk-integration-schedule.yml' = (
                 $productionSdkScheduleWorkflow +
+                "`n# Any production workflow change requires contract review.")
+        }
+    Invoke-ProductionContractFixture `
+        -Name production-contract-locks-unsigned-rc-workflow `
+        -AuxiliaryWorkflowOverrides @{
+            'unsigned-release-candidate.yml' = (
+                $productionUnsignedReleaseCandidateWorkflow +
                 "`n# Any production workflow change requires contract review.")
         }
     Invoke-ProductionContractFixture `
