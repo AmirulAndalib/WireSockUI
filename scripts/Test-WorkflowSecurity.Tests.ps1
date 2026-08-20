@@ -283,10 +283,10 @@ try {
         -RequireProductionContracts $true `
         -ShouldPass $false
     Invoke-ProductionContractFixture `
-        -Name production-sdk-validation-opt-out `
+        -Name production-release-drops-hosted-sdk-prerequisite `
         -MainWorkflow $productionMainWorkflow.Replace(
-            '      require_sdk_validation: true',
-            '      require_sdk_validation: false')
+            '          foreach ($workflow in @($env:CI_WORKFLOW, $env:HOSTED_SDK_WORKFLOW)) {',
+            '          foreach ($workflow in @($env:CI_WORKFLOW)) {')
     Invoke-ProductionContractFixture `
         -Name production-contract-detects-unmodeled-change `
         -MainWorkflow (

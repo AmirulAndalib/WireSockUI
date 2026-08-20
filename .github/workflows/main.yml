@@ -17,6 +17,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 5
     permissions:
+      actions: read
       contents: read
     outputs:
       trusted_sha: ${{ steps.authorize.outputs.trusted_sha }}
@@ -38,9 +39,13 @@ jobs:
         id: authorize
         shell: pwsh
         env:
+          CI_WORKFLOW: ci.yml
           DEFAULT_BRANCH: main
           GH_TOKEN: ${{ github.token }}
+          HOSTED_SDK_WORKFLOW: hosted-sdk-experiment.yml
+          RELEASE_API_URL: ${{ github.api_url }}
           RELEASE_REF: ${{ github.ref }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           $ErrorActionPreference = 'Stop'
@@ -112,9 +117,31 @@ jobs:
             throw "Release tag version '$version' does not match protected-tip build version '$resolvedVersion'."
           }
 
+          foreach ($workflow in @($env:CI_WORKFLOW, $env:HOSTED_SDK_WORKFLOW)) {
+            $runsUri = "$env:RELEASE_API_URL/repos/$env:RELEASE_REPOSITORY/actions/workflows/$workflow/runs" +
+              "?branch=$env:DEFAULT_BRANCH&event=push&status=success&head_sha=$trustedSha&per_page=1"
+            $runs = Invoke-RestMethod `
+              -Method Get `
+              -Headers $headers `
+              -TimeoutSec 30 `
+              -Uri $runsUri
+            if ([int]$runs.total_count -lt 1 -or
+                @($runs.workflow_runs).Count -ne 1 -or
+                [string]$runs.workflow_runs[0].head_sha -cne $trustedSha -or
+                [string]$runs.workflow_runs[0].conclusion -cne 'success') {
+              throw "Release commit $trustedSha has no successful $workflow push run."
+            }
+          }
+
           "trusted_sha=$trustedSha" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
           "trusted_tag_oid=$trustedTagOid" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
           "version=$version" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Report authorized release prerequisites
+        shell: pwsh
+        env:
+          TRUSTED_SHA: ${{ steps.authorize.outputs.trusted_sha }}
+        run: Write-Host "Authorized signed release for protected commit '$env:TRUSTED_SHA' after successful CI and hosted SDK validation."
 
   test:
     needs: authorize-release
@@ -161,11 +188,12 @@ jobs:
 
   sdk-integration:
     needs: authorize-release
-    # Load the privileged workflow definition from the audited immutable
-    # implementation commit. It validates the caller SHA/ref independently.
+    # Retain optional protected self-hosted validation when those runner pools
+    # are available. The release authorization above always fails closed unless
+    # current-tip CI and the hosted x64/ARM64 SDK experiment both succeeded.
     uses: wiresock/WireSockUI/.github/workflows/sdk-integration.yml@0440f3d3a42216a23ce455686ce983b88af62a3e
     with:
-      require_sdk_validation: true
+      require_sdk_validation: false
       sdk_workflow_sha: 0440f3d3a42216a23ce455686ce983b88af62a3e
 
   build:
