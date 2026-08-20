@@ -544,7 +544,7 @@ namespace WireSockUI.Forms
             this.pnlProfileActions.Location = new System.Drawing.Point(0, 472);
             this.pnlProfileActions.Margin = new System.Windows.Forms.Padding(0);
             this.pnlProfileActions.Name = "pnlProfileActions";
-            this.pnlProfileActions.Padding = new System.Windows.Forms.Padding(0, 8, 0, 0);
+            this.pnlProfileActions.Padding = new System.Windows.Forms.Padding(0, 6, 8, 6);
             this.pnlProfileActions.Size = new System.Drawing.Size(554, 40);
             this.pnlProfileActions.TabIndex = 18;
             this.pnlProfileActions.WrapContents = false;
