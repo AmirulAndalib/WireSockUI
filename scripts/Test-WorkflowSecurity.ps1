@@ -25,7 +25,7 @@ $productionWorkflowDigests = @{
     'ci.yml' = '4a9c7bfa3fdab4b1c8ff5084d2c9b9c8a1cd469db730c83187605df1fbd5c997'
     'hosted-sdk-experiment.yml' =
         'bf33b7604f89031f7030f791d2dbaa87df9c16b6ef5e7a6d45eca60eb17d7e79'
-    'main.yml' = '1cb8bf03a9a2d6b1900b5d5b4dd9d9039fdaf5098495fe08cd70947045e4642a'
+    'main.yml' = '72ef02fcc5c7a7247a10b395e6d3240d57e1b725c674e4b4810b1a5d1a82a344'
     'sdk-contract-drift.yml' =
         '0d47460aa8e978157d397d26d40dcae9a6c300457b2695d104ff158e61cad771'
     'sdk-integration-schedule.yml' =
@@ -927,6 +927,23 @@ $mainWorkflow = Get-Content `
     -LiteralPath (Join-Path $workflowRoot.FullName 'main.yml') `
     -Raw `
     -Encoding UTF8
+if ($enforceProductionContracts) {
+    Assert-WorkflowCriticalStep `
+        -WorkflowText $mainWorkflow `
+        -StepName 'Verify signed release tag and protected-branch ancestry' `
+        -Description 'The release workflow'
+    $releaseAuthorizationScript = Get-WorkflowLiteralRunScript `
+        -WorkflowText $mainWorkflow `
+        -StepName 'Verify signed release tag and protected-branch ancestry' `
+        -Description 'The release workflow'
+    Assert-PowerShellExecutableLines `
+        -Script $releaseAuthorizationScript `
+        -Description 'The release authorization step' `
+        -RequiredLines @(
+            'foreach ($workflow in @($env:CI_WORKFLOW, $env:HOSTED_SDK_WORKFLOW)) {',
+            '[string]$runs.workflow_runs[0].head_sha -cne $trustedSha -or',
+            '[string]$runs.workflow_runs[0].conclusion -cne ''success'') {')
+}
 if ($mainWorkflow -notmatch "(?m)^\s+- 'release-v\*\.\*\.\*'\s*$" -or
     $mainWorkflow -match "(?m)^\s+- 'v\*") {
     throw 'The release workflow must use only the protected release-vMAJOR.MINOR.PATCH namespace.'
