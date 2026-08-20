@@ -241,8 +241,7 @@ jobs:
           ./scripts/Test-MsiInstallation.ps1 `
             -MsiPath $msi `
             -ValidationMetadataPath "$msi.validation.json" `
-            -EphemeralMachine `
-            -AllowUnsignedPayload
+            -EphemeralMachine
 
   publish:
     name: publish (${{ matrix.configuration }}, ${{ matrix.platform }})
@@ -355,7 +354,6 @@ jobs:
             -Flavor $env:INSTALLER_FLAVOR `
             -PayloadDirectory "./bin/$env:BUILD_PLATFORM/$env:BUILD_CONFIGURATION/net472-windows/publish" `
             -OutputDirectory $output `
-            -AllowUnsignedPayload `
             -NoRestore
 
       - name: Upload MSI for architecture-isolation validation
@@ -490,7 +488,6 @@ jobs:
             -Flavor no-uwp `
             -PayloadDirectory './bin/x64/Release/net472-windows/publish' `
             -OutputDirectory $output `
-            -AllowUnsignedPayload `
             -NoRestore
 
           ./scripts/Build-Msi.ps1 `
@@ -499,7 +496,6 @@ jobs:
             -Flavor uwp `
             -PayloadDirectory './bin/x64/Release UWP/net472-windows/publish' `
             -OutputDirectory $output `
-            -AllowUnsignedPayload `
             -NoRestore
 
       - name: Exercise MSI transitions and rollback
@@ -514,5 +510,4 @@ jobs:
             -CurrentX64UwpValidationMetadataPath "./current-msis/WireSockUI-$env:CURRENT_VERSION-win-x64-uwp.msi.validation.json" `
             -BaselineX86NoUwpMsiPath "./baseline-x86-no-uwp/WireSockUI-$env:BASELINE_VERSION-win-x86-no-uwp.msi" `
             -BaselineX86NoUwpValidationMetadataPath "./baseline-x86-no-uwp/WireSockUI-$env:BASELINE_VERSION-win-x86-no-uwp.msi.validation.json" `
-            -EphemeralMachine `
-            -AllowUnsignedPayload
+            -EphemeralMachine

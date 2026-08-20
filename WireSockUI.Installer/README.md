@@ -1,10 +1,12 @@
 # WireSock UI MSI
 
-This standalone WiX 6 project packages an already-published and signed,
-architecture-specific WireSock UI payload. It is intentionally not part of
-`WireSockUI.sln`: the MSI must be built only after the native host has embedded
-the final payload manifest and `WireSockUI.exe` has been Authenticode-signed.
-The resulting per-machine MSI is the only supported distribution format;
+This standalone WiX 6 project packages an already-published, intentionally
+unsigned, architecture-specific WireSock UI payload. It is intentionally not
+part of `WireSockUI.sln`: the MSI must be built only after the native host has
+embedded the final payload manifest. The builder rejects application modules
+with embedded Authenticode certificate tables and verifies that the resulting
+MSI is unsigned. The
+per-machine MSI is the only supported distribution format;
 portable ZIPs, loose publish directories, and direct copies into Program Files
 are not supported installation or servicing mechanisms.
 
@@ -21,16 +23,15 @@ From the repository root:
 ```powershell
 .\scripts\Build-Msi.ps1 `
   -Platform x64 `
-  -Version 1.2.3 `
+  -Version 0.3.0 `
   -Flavor no-uwp `
   -PayloadDirectory .\artifacts\publish\win-x64 `
   -OutputDirectory .\artifacts\msi
 ```
 
 Use `x86`, `x64`, or `ARM64`, and use flavor `uwp` or `no-uwp`. The version must
-be a canonical three-field MSI version within `255.255.65535`. For local
-installer development only, an unsigned launcher can be packaged by adding
-`-AllowUnsignedPayload`.
+be a canonical three-field MSI version within `255.255.65535`. Starting with
+`0.3.0`, unsigned input and output are mandatory; there is no signing override.
 
 The command restores the exactly pinned `WixToolset.Sdk/6.0.2` and
 `WixToolset.UI.wixext/6.0.2` packages unless `-NoRestore` is passed. It verifies
@@ -99,7 +100,7 @@ active identities omitted by the complete six-package release matrix.
 - Reparse points are rejected from the source payload. Files are copied to fresh
   staging files, so source hard links or alternate file identities are not
   reproduced in the MSI.
-- The launcher's signed, embedded manifest is the runtime allowlist. Unknown
+- The launcher's embedded manifest is the runtime allowlist. Unknown
   source files fail packaging. PDBs, prior installers, archives, checksums,
   `_manifest` SBOM staging, SPDX JSON, and provenance JSONL are never staged.
 - Every manifest-bound MSI file is either directly versioned or an unversioned
@@ -111,8 +112,9 @@ active identities omitted by the complete six-package release matrix.
   every runtime file. Pinned WiX 6 performs a non-executing cabinet extraction,
   which works even when the MSI target architecture differs from the validation
   runner. Validation confirms the extracted image matches that sidecar
-  byte-for-byte and rechecks the launcher's architecture and Authenticode
-  signature.
+  byte-for-byte, rechecks the launcher's architecture, proves every application
+  EXE/DLL has no embedded Authenticode certificate table, and verifies the MSI
+  itself reports Authenticode status `NotSigned`.
 - .NET Framework 4.7.2 or later is a launch prerequisite for x86/x64. ARM64
   requires .NET Framework 4.8.1 because that release first added the native
   ARM64 CLR. The condition is bypassed only for maintenance of an
@@ -120,44 +122,44 @@ active identities omitted by the complete six-package release matrix.
 
 ## Release integration
 
-Release automation produces exactly six signed packages: x86, x64, and ARM64,
-each in `no-uwp` and `uwp` flavors. Both the native `WireSockUI.exe` inside the
-cabinet and the final MSI are Authenticode-signed; the managed DLL and all other
-payload files must remain byte-identical after native-host signing.
+Release automation produces exactly six unsigned packages: x86, x64, and
+ARM64, each in `no-uwp` and `uwp` flavors. Every application EXE/DLL inside the
+cabinet must contain no embedded Authenticode certificate table, and the final
+MSI must report Authenticode status `NotSigned`. A Windows installation may
+still recognize an unchanged framework dependency through an external system
+catalog; no such catalog or signature is embedded in the release.
 
-After building, sign the MSI with the release code-signing identity and validate
-the signed result:
+Validate the unsigned result after building:
 
 ```powershell
 .\scripts\Test-MsiPackage.ps1 `
-  -MsiPath .\artifacts\msi\WireSockUI-1.2.3-win-x64-no-uwp.msi `
-  -ValidationMetadataPath .\artifacts\msi\WireSockUI-1.2.3-win-x64-no-uwp.msi.validation.json `
+  -MsiPath .\artifacts\msi\WireSockUI-0.3.0-win-x64-no-uwp.msi `
+  -ValidationMetadataPath .\artifacts\msi\WireSockUI-0.3.0-win-x64-no-uwp.msi.validation.json `
   -ExpectedArchitecture x64 `
-  -ExpectedVersion 1.2.3 `
-  -ExpectedFlavor no-uwp `
-  -RequireSignature
+  -ExpectedVersion 0.3.0 `
+  -ExpectedFlavor no-uwp
 ```
 
-`Build-Msi.ps1` performs the same table and extracted-cabinet validation before
-returning. The standalone post-signing validation derives the ProductCode from
-version, architecture, and flavor and uses the persistent sidecar to prove that
-MSI signing did not change the cabinet payload. The sidecar is validation
-metadata, not a signature.
+`Build-Msi.ps1` performs the same table, unsigned-artifact, and
+extracted-cabinet validation before returning. The standalone validation
+derives the ProductCode from version, architecture, and flavor and uses the
+persistent sidecar to prove the cabinet payload is unchanged. The sidecar is
+validation metadata, not a signature.
 
-Each signed MSI is published with its `*.msi.validation.json`, a separate SPDX
+Each unsigned MSI is published with its `*.msi.validation.json`, a separate SPDX
 SBOM generated from exactly the installed file set, and SHA-256 sidecars for all
 three assets. GitHub artifact-provenance attestations cover the MSI, validation
 document, and SBOM. These files remain external evidence and are never inserted
 into the runtime cabinet. Publication rechecks all hashes and the authorized
-signed tag, refuses to overwrite an existing GitHub release, and never uses
-asset clobbering. Do not mutate or republish an MSI after signing.
+tag, refuses to overwrite an existing GitHub release, and never uses asset
+clobbering. Do not mutate or republish an MSI.
 
 An elevated install smoke test is available for a disposable Windows VM:
 
 ```powershell
 .\scripts\Test-MsiInstallation.ps1 `
-  -MsiPath .\artifacts\msi\WireSockUI-1.2.3-win-x64-no-uwp.msi `
-  -ValidationMetadataPath .\artifacts\msi\WireSockUI-1.2.3-win-x64-no-uwp.msi.validation.json `
+  -MsiPath .\artifacts\msi\WireSockUI-0.3.0-win-x64-no-uwp.msi `
+  -ValidationMetadataPath .\artifacts\msi\WireSockUI-0.3.0-win-x64-no-uwp.msi.validation.json `
   -EphemeralMachine
 ```
 
@@ -173,8 +175,8 @@ isolated machine with no existing WireSock UI installation or user data.
 Hosted CI builds and statically validates all six MSI variants, checks
 cross-architecture ProductCode/component isolation, runs the native host's
 pre-CLR self-test, and runs the x64 MSI install/repair/uninstall scenario on a
-guarded ephemeral runner. Release validation repeats the signed-cabinet checks
-after signing and immediately before publication.
+guarded ephemeral runner. Release validation repeats the unsigned-cabinet
+checks immediately before publication.
 
 Verify all six release packages together so the validator can prove both
 cross-architecture isolation and complete coverage of the reviewed component
@@ -182,20 +184,20 @@ identity map:
 
 ```powershell
 .\scripts\Test-MsiArchitectureIsolation.ps1 `
-  -MsiPath .\artifacts\msi\WireSockUI-1.2.3-win-x86-no-uwp.msi,`
-           .\artifacts\msi\WireSockUI-1.2.3-win-x64-no-uwp.msi,`
-           .\artifacts\msi\WireSockUI-1.2.3-win-arm64-no-uwp.msi,`
-           .\artifacts\msi\WireSockUI-1.2.3-win-x86-uwp.msi,`
-           .\artifacts\msi\WireSockUI-1.2.3-win-x64-uwp.msi,`
-           .\artifacts\msi\WireSockUI-1.2.3-win-arm64-uwp.msi
+  -MsiPath .\artifacts\msi\WireSockUI-0.3.0-win-x86-no-uwp.msi,`
+           .\artifacts\msi\WireSockUI-0.3.0-win-x64-no-uwp.msi,`
+           .\artifacts\msi\WireSockUI-0.3.0-win-arm64-no-uwp.msi,`
+           .\artifacts\msi\WireSockUI-0.3.0-win-x86-uwp.msi,`
+           .\artifacts\msi\WireSockUI-0.3.0-win-x64-uwp.msi,`
+           .\artifacts\msi\WireSockUI-0.3.0-win-arm64-uwp.msi
 
 .\scripts\Test-MsiArchitectureIsolation.Tests.ps1 `
-  -MsiPath .\artifacts\msi\WireSockUI-1.2.3-win-x86-no-uwp.msi,`
-           .\artifacts\msi\WireSockUI-1.2.3-win-x64-no-uwp.msi,`
-           .\artifacts\msi\WireSockUI-1.2.3-win-arm64-no-uwp.msi,`
-           .\artifacts\msi\WireSockUI-1.2.3-win-x86-uwp.msi,`
-           .\artifacts\msi\WireSockUI-1.2.3-win-x64-uwp.msi,`
-           .\artifacts\msi\WireSockUI-1.2.3-win-arm64-uwp.msi
+  -MsiPath .\artifacts\msi\WireSockUI-0.3.0-win-x86-no-uwp.msi,`
+           .\artifacts\msi\WireSockUI-0.3.0-win-x64-no-uwp.msi,`
+           .\artifacts\msi\WireSockUI-0.3.0-win-arm64-no-uwp.msi,`
+           .\artifacts\msi\WireSockUI-0.3.0-win-x86-uwp.msi,`
+           .\artifacts\msi\WireSockUI-0.3.0-win-x64-uwp.msi,`
+           .\artifacts\msi\WireSockUI-0.3.0-win-arm64-uwp.msi
 ```
 
 Close WireSock UI before maintenance. Windows Restart Manager handles normal

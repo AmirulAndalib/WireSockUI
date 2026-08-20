@@ -112,7 +112,8 @@ namespace WireSockUI.Native
 
                 using (SecureFileSystem.OpenDirectoryChainForStableChildCreation(startMenuPath))
                 {
-                    var shortcutFile = Path.Combine(startMenuPath, BuildShortcutFileName(appName, executablePath));
+                    DeleteLegacyNotificationShortcuts(startMenuPath, appName, executablePath);
+                    var shortcutFile = Path.Combine(startMenuPath, BuildShortcutFileName(appName));
                     var stagingFile = Path.Combine(Global.SecureMainFolder,
                         $"notification-shortcut-{Guid.NewGuid():N}.lnk");
                     try
@@ -149,6 +150,28 @@ namespace WireSockUI.Native
             {
                 Trace.TraceWarning($"Unable to ensure the WireSock UI notification shortcut: {ex.Message}");
                 return false;
+            }
+        }
+
+        private static void DeleteLegacyNotificationShortcuts(
+            string startMenuPath,
+            string appName,
+            string executablePath)
+        {
+            var executableName = Path.GetFileNameWithoutExtension(executablePath);
+            foreach (var shortcutName in new[]
+                     {
+                         BuildLegacyShortcutFileName(executableName, executablePath),
+                         BuildLegacyShortcutFileName(appName, executablePath)
+                     })
+            {
+                var shortcutPath = Path.Combine(startMenuPath, shortcutName);
+                if (!TryGetAttributes(shortcutPath, out var attributes))
+                    continue;
+
+                Trace.TraceInformation(
+                    $"Removing legacy path-suffixed notification shortcut '{shortcutPath}' without parsing its contents.");
+                DeleteExistingShortcut(shortcutPath, attributes);
             }
         }
 
@@ -399,7 +422,12 @@ namespace WireSockUI.Native
             return string.IsNullOrWhiteSpace(segment) ? "WireSockUI" : segment;
         }
 
-        internal static string BuildShortcutFileName(string appName, string executablePath)
+        internal static string BuildShortcutFileName(string appName)
+        {
+            return $"{SanitizeShortcutFileNameSegment(appName)}.lnk";
+        }
+
+        internal static string BuildLegacyShortcutFileName(string appName, string executablePath)
         {
             return $"{SanitizeShortcutFileNameSegment(appName)}-{BuildPathSeed(executablePath)}.lnk";
         }

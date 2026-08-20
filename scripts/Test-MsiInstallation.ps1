@@ -7,9 +7,7 @@ param(
     [string]$ValidationMetadataPath,
 
     [Parameter(Mandatory = $true)]
-    [switch]$EphemeralMachine,
-
-    [switch]$AllowUnsignedPayload
+    [switch]$EphemeralMachine
 )
 
 $ErrorActionPreference = 'Stop'
@@ -723,8 +721,6 @@ try {
         ExpectedVersion = [string]$metadata.ProductVersion
         ExpectedFlavor = [string]$metadata.Flavor
         ExpectedProductCode = $productCode
-        RequireSignature = -not $AllowUnsignedPayload
-        AllowUnsignedPayload = [bool]$AllowUnsignedPayload
     }
     & (Join-Path $PSScriptRoot 'Test-MsiPackage.ps1') @packageValidationParameters
 

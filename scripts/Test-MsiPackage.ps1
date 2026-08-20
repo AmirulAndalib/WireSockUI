@@ -22,10 +22,7 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$ValidationMetadataPath,
 
-    [string]$WixToolPath,
-
-    [switch]$RequireSignature,
-    [switch]$AllowUnsignedPayload
+    [string]$WixToolPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -90,12 +87,9 @@ if (-not [string]::IsNullOrWhiteSpace($ValidationMetadataPath)) {
     }
 }
 
-if ($RequireSignature) {
-    $signature = Get-AuthenticodeSignature -LiteralPath $resolvedMsiPath
-    if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
-        throw "MSI must have a valid Authenticode signature. Status: $($signature.Status)."
-    }
-}
+& (Join-Path $PSScriptRoot 'Test-UnsignedArtifacts.ps1') `
+    -Path $resolvedMsiPath |
+    Out-Null
 
 $installer = $null
 $database = $null
@@ -2405,12 +2399,9 @@ try {
                 -Path $extractedManagedAssemblyPath `
                 -ExpectedPlatform $expectedValidatorPlatform |
                 Out-Null
-            if (-not $AllowUnsignedPayload) {
-                $launcherSignature = Get-AuthenticodeSignature -LiteralPath $extractedLauncherPath
-                if ($launcherSignature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
-                    throw "Extracted WireSockUI.exe has invalid Authenticode status $($launcherSignature.Status)."
-                }
-            }
+            & (Join-Path $PSScriptRoot 'Test-UnsignedArtifacts.ps1') `
+                -Path $extractionRoot |
+                Out-Null
         }
         finally {
             if ([IO.Directory]::Exists($extractionRoot)) {

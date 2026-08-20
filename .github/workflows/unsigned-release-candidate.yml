@@ -194,7 +194,6 @@ jobs:
             -Flavor $env:INSTALLER_FLAVOR `
             -PayloadDirectory "./bin/$env:BUILD_PLATFORM/$env:BUILD_CONFIGURATION/net472-windows/publish" `
             -OutputDirectory $output `
-            -AllowUnsignedPayload `
             -NoRestore
 
           $warning = @(
@@ -265,8 +264,7 @@ jobs:
           ./scripts/Test-MsiInstallation.ps1 `
             -MsiPath $msis[0].FullName `
             -ValidationMetadataPath "$($msis[0].FullName).validation.json" `
-            -EphemeralMachine `
-            -AllowUnsignedPayload
+            -EphemeralMachine
 
   bundle:
     needs:
@@ -341,8 +339,7 @@ jobs:
               -ExpectedArchitecture $Matches.platform `
               -ExpectedVersion $env:RC_VERSION `
               -ExpectedFlavor $Matches.flavor `
-              -ValidationMetadataPath "$($msi.FullName).validation.json" `
-              -AllowUnsignedPayload
+              -ValidationMetadataPath "$($msi.FullName).validation.json"
           }
           ./scripts/Test-MsiArchitectureIsolation.ps1 -MsiPath $msis.FullName
           ./scripts/Test-MsiArchitectureIsolation.Tests.ps1 -MsiPath $msis.FullName

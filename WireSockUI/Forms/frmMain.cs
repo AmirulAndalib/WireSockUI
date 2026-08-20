@@ -3086,20 +3086,19 @@ namespace WireSockUI.Forms
                 return;
 
             var updating = false;
+            var latestLogIndex = -1;
             try
             {
                 lstLog.BeginUpdate();
                 updating = true;
-                var previousCount = _visibleLogMessages.Count;
                 _visibleLogMessages.AddRange(logMessages);
                 var currentCount = _visibleLogMessages.Count;
                 if (lstLog.VirtualListSize != currentCount)
                     lstLog.VirtualListSize = currentCount;
                 else
                     lstLog.Invalidate();
-
-                if (currentCount > 0 && previousCount < currentCount)
-                    lstLog.EnsureVisible(currentCount - 1);
+                btnClearLog.Enabled = currentCount > 0;
+                latestLogIndex = currentCount - 1;
             }
             catch (ObjectDisposedException)
             {
@@ -3122,6 +3121,44 @@ namespace WireSockUI.Forms
                     catch (InvalidOperationException)
                     {
                     }
+            }
+
+            if (latestLogIndex >= 0)
+                ScrollLogToLatest(latestLogIndex);
+        }
+
+        private void OnClearLogClick(object sender, EventArgs e)
+        {
+            _uiLogBuffer.Clear();
+            _visibleLogMessages.Clear();
+            lstLog.VirtualListSize = 0;
+            lstLog.Invalidate();
+            btnClearLog.Enabled = false;
+        }
+
+        private void OnMainTabChanged(object sender, EventArgs e)
+        {
+            if (tabControl.SelectedTab == tabPageLog && _visibleLogMessages.Count > 0)
+                ScrollLogToLatest(_visibleLogMessages.Count - 1);
+        }
+
+        private void ScrollLogToLatest(int latestLogIndex)
+        {
+            if (_shutdownComplete || IsDisposed || Disposing || latestLogIndex < 0)
+                return;
+
+            try
+            {
+                // EnsureVisible must run after EndUpdate. It also needs to run
+                // when the bounded ring buffer is already full and its count no
+                // longer changes as older rows are overwritten.
+                lstLog.EnsureVisible(latestLogIndex);
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            catch (InvalidOperationException)
+            {
             }
         }
 

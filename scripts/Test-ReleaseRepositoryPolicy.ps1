@@ -103,7 +103,7 @@ if ([string]$repositoryMetadata.full_name -cne $Repository -or
 $immutableReleasePolicy =
     Invoke-GitHubPolicyRequest -RelativePath 'immutable-releases'
 if ($immutableReleasePolicy.enabled -ne $true) {
-    throw "Immutable releases must be enabled for '$Repository' before a release can be signed."
+    throw "Immutable releases must be enabled for '$Repository' before a release can be published."
 }
 
 $actionsPolicy = Invoke-GitHubPolicyRequest -RelativePath 'actions/permissions'
@@ -120,9 +120,7 @@ $expectedActionPatterns = @(
     'actions/create-github-app-token@*',
     'actions/download-artifact@*',
     'actions/setup-dotnet@*',
-    'actions/upload-artifact@*',
-    'azure/artifact-signing-action@*',
-    'azure/login@*'
+    'actions/upload-artifact@*'
 )
 $actualActionPatterns = @($selectedActions.patterns_allowed | Sort-Object -Unique)
 $actionPatternDifferences = @(

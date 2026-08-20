@@ -17,7 +17,6 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$OutputDirectory,
 
-    [switch]$AllowUnsignedPayload,
     [switch]$NoRestore,
     [switch]$PreserveFailedArtifactsForDiagnostics
 )
@@ -716,12 +715,8 @@ $launcherArchitecture = Get-PortableExecutableArchitecture -Path $launcherPath
 if ($launcherArchitecture -cne $normalizedArchitecture) {
     throw "WireSockUI.exe targets $launcherArchitecture, not requested architecture $normalizedArchitecture."
 }
-if (-not $AllowUnsignedPayload) {
-    $signature = Get-AuthenticodeSignature -LiteralPath $launcherPath
-    if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
-        throw "WireSockUI.exe must have a valid Authenticode signature before packaging. Status: $($signature.Status). Use -AllowUnsignedPayload only for local development."
-    }
-}
+& (Join-Path $PSScriptRoot 'Test-UnsignedArtifacts.ps1') -Path $payloadPath |
+    Out-Null
 
 $manifestEntries = @(Get-EmbeddedPayloadManifest -LauncherPath $launcherPath)
 $launcherLength = [Int64](Get-Item -LiteralPath $launcherPath).Length
@@ -914,7 +909,6 @@ try {
         ExpectedProductCode = $productCode
         ExpectedFilesPath = $expectedFilesPath
         ValidationMetadataPath = $validationMetadataPath
-        AllowUnsignedPayload = [bool]$AllowUnsignedPayload
     }
     & $validationScriptPath @validationParameters
     if ($LASTEXITCODE -ne 0) {

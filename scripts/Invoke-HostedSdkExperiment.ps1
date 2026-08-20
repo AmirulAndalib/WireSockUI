@@ -540,7 +540,6 @@ try {
         -Flavor no-uwp `
         -PayloadDirectory $publishedPayloadPath `
         -OutputDirectory $msiRoot `
-        -AllowUnsignedPayload `
         -NoRestore
 
     $msis = @(Get-ChildItem -LiteralPath $msiRoot -File -Filter '*.msi')
@@ -550,8 +549,7 @@ try {
     & $testMsiInstallationScriptPath `
         -MsiPath $msis[0].FullName `
         -ValidationMetadataPath "$($msis[0].FullName).validation.json" `
-        -EphemeralMachine `
-        -AllowUnsignedPayload
+        -EphemeralMachine
 
     $env:WIRESOCKUI_WGBOOSTER_PATH = $libraryPath
     $env:WIRESOCKUI_TEST_PROFILE_TRANSPARENT = $profiles.Transparent

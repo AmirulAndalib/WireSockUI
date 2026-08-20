@@ -581,8 +581,8 @@ extern "C" LONG WINAPI SentinelFinishHash(void*, unsigned char*, ULONG, ULONG)
         }
 
         # A .local sidecar changes Windows DLL/COM redirection behavior even
-        # though it is not itself a DLL. The signed manifest must therefore bind
-        # every runtime file rather than only familiar executable extensions.
+        # though it is not itself a DLL. The embedded payload manifest must
+        # therefore bind every runtime file, not only executable extensions.
         $dotLocalPath = Join-Path $payloadDirectory 'WireSockUI.exe.local'
         try {
             [IO.File]::WriteAllBytes($dotLocalPath, [byte[]]::new(0))

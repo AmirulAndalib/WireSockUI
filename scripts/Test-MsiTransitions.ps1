@@ -25,9 +25,7 @@ param(
     [string]$BaselineX86NoUwpValidationMetadataPath,
 
     [Parameter(Mandatory = $true)]
-    [switch]$EphemeralMachine,
-
-    [switch]$AllowUnsignedPayload
+    [switch]$EphemeralMachine
 )
 
 $ErrorActionPreference = 'Stop'
@@ -307,8 +305,6 @@ function Read-PackageSpec {
         ExpectedVersion = [string]$metadata.ProductVersion
         ExpectedFlavor = $ExpectedFlavor
         ExpectedProductCode = [string]$metadata.ProductCode
-        RequireSignature = -not $AllowUnsignedPayload
-        AllowUnsignedPayload = [bool]$AllowUnsignedPayload
     }
     & $validationScriptPath @validationParameters |
         ForEach-Object { Write-Host $_ }

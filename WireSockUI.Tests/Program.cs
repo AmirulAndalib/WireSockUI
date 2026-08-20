@@ -270,7 +270,7 @@ namespace WireSockUI.Tests
                 { "Editor application-rule insertion rejects ambiguous values", EditorApplicationRuleInsertionRejectsAmbiguousValues },
                 { "Profile display formatting bounds comma-separated values", ProfileDisplayFormattingBoundsValues },
                 { "AppUserModelID is path seeded", AppUserModelIdIsPathSeeded },
-                { "Notification shortcut name is path seeded", NotificationShortcutNameIsPathSeeded },
+                { "Notification shortcut uses a clean display name", NotificationShortcutUsesCleanDisplayName },
                 { "Notification shortcut create races are rejected without parsing", NotificationShortcutCreateRaceIsRejectedWithoutParsing },
                 { "Notification shortcut parent mutation races are blocked", NotificationShortcutParentMutationRaceIsBlocked },
                 { "Notification shortcut copy failures preserve their cause", NotificationShortcutCopyFailuresPreserveCause },
@@ -4488,23 +4488,23 @@ namespace WireSockUI.Tests
             AssertTrue(first.Length <= 128, "Expected AppUserModelID to fit the Windows shell length limit.");
         }
 
-        private static void NotificationShortcutNameIsPathSeeded()
+        private static void NotificationShortcutUsesCleanDisplayName()
         {
-            var first = WindowsApplicationContext.BuildShortcutFileName(
-                "WireSockUI", @"C:\Program Files\WireSockUI\WireSockUI.exe");
-            var second = WindowsApplicationContext.BuildShortcutFileName(
-                "WireSockUI", @"D:\Tools\WireSockUI\WireSockUI.exe");
-
-            AssertFalse(string.Equals(first, second, StringComparison.Ordinal),
-                "Expected side-by-side installs to use different notification shortcuts.");
-            AssertTrue(first.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase),
-                "Expected a shell shortcut filename.");
+            AssertEqual("WireSock UI.lnk",
+                WindowsApplicationContext.BuildShortcutFileName("WireSock UI"));
 
             var untrustedName = WindowsApplicationContext.BuildShortcutFileName(
-                @"..\WireSockUI/Bad:Name", @"C:\Program Files\WireSockUI\WireSockUI.exe");
+                @"..\WireSockUI/Bad:Name");
             AssertFalse(untrustedName.Contains("..") || untrustedName.Contains("\\") || untrustedName.Contains("/") ||
                         untrustedName.Contains(":"),
                 "Expected shortcut filenames to remove path and device-name metacharacters.");
+
+            var firstLegacy = WindowsApplicationContext.BuildLegacyShortcutFileName(
+                "WireSockUI", @"C:\Program Files\WireSockUI\WireSockUI.exe");
+            var secondLegacy = WindowsApplicationContext.BuildLegacyShortcutFileName(
+                "WireSockUI", @"D:\Tools\WireSockUI\WireSockUI.exe");
+            AssertFalse(string.Equals(firstLegacy, secondLegacy, StringComparison.Ordinal),
+                "Expected legacy notification shortcuts to remain discoverable by their path seed during migration.");
         }
 
         private static void NotificationImagePathsUseFileUris()
@@ -6539,6 +6539,29 @@ namespace WireSockUI.Tests
                 throwingDispatches.Dequeue()();
                 AssertEqual(1, messagesAfterScheduleFailure.Count);
                 AssertEqual("after-schedule-failure", messagesAfterScheduleFailure[0].Message);
+            }
+
+            var clearDispatches = new Queue<Action>();
+            var messagesAfterClear = new List<WireSockManager.LogMessage>();
+            using (var buffer = new UiLogMessageBuffer(
+                       4,
+                       2,
+                       action =>
+                       {
+                           clearDispatches.Enqueue(action);
+                           return true;
+                       },
+                       batch => messagesAfterClear.AddRange(batch)))
+            {
+                buffer.Enqueue(new WireSockManager.LogMessage { Message = "before-clear" });
+                buffer.Clear();
+                clearDispatches.Dequeue()();
+                AssertEqual(0, messagesAfterClear.Count);
+
+                buffer.Enqueue(new WireSockManager.LogMessage { Message = "after-clear" });
+                clearDispatches.Dequeue()();
+                AssertEqual(1, messagesAfterClear.Count);
+                AssertEqual("after-clear", messagesAfterClear[0].Message);
             }
         }
 
