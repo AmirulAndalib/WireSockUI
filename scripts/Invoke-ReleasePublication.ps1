@@ -223,16 +223,19 @@ function Invoke-GitHubRequest {
 function Get-AllReleases {
     $releases = [Collections.Generic.List[object]]::new()
     foreach ($page in 1..$maximumReleasePages) {
-        $pageItems = @(
+        # Assign before array-wrapping. Invoke-RestMethod emits JSON arrays as a
+        # single pipeline object, and calling the wrapper directly inside @()
+        # preserves that nested array instead of enumerating its items.
+        $pageResponse =
             Invoke-GitHubRequest `
                 -Method Get `
                 -RelativePath "releases?per_page=100&page=$page"
-        )
+        $pageItems = @($pageResponse)
         foreach ($item in $pageItems) {
             $releases.Add($item)
         }
         if ($pageItems.Count -lt 100) {
-            return @($releases)
+            return $releases.ToArray()
         }
     }
     throw "Repository release inventory exceeds the bounded $($maximumReleasePages * 100)-release scan."
@@ -246,16 +249,16 @@ function Get-AllReleaseAssets {
 
     $assets = [Collections.Generic.List[object]]::new()
     foreach ($page in 1..$maximumAssetPages) {
-        $pageItems = @(
+        $pageResponse =
             Invoke-GitHubRequest `
                 -Method Get `
                 -RelativePath "releases/$ReleaseId/assets?per_page=100&page=$page"
-        )
+        $pageItems = @($pageResponse)
         foreach ($item in $pageItems) {
             $assets.Add($item)
         }
         if ($pageItems.Count -lt 100) {
-            return @($assets)
+            return $assets.ToArray()
         }
     }
     throw "Remote release asset inventory exceeds the bounded $($maximumAssetPages * 100)-asset scan."
