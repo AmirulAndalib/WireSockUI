@@ -264,6 +264,7 @@ namespace WireSockUI.Tests
                 { "Editor validates Amnezia options", EditorValidatesAmneziaOptions },
                 { "Image lists clone icons before delayed handle creation", ImageListsCloneIconsBeforeDelayedHandleCreation },
                 { "WinForms dialogs initialize and dispose on an STA thread", WinFormsDialogsInitializeAndDisposeOnStaThread },
+                { "Main window action rows remain visible after scaling", MainWindowActionRowsRemainVisibleAfterScaling },
                 { "Settings copies the secured profiles path without shell activation", SettingsCopiesSecuredProfilesPathWithoutShellActivation },
                 { "Editor bounds synchronous syntax highlighting", EditorBoundsSynchronousSyntaxHighlighting },
                 { "Editor application-rule insertion is section aware", EditorApplicationRuleInsertionIsSectionAware },
@@ -4154,6 +4155,68 @@ namespace WireSockUI.Tests
             AssertTrue(
                 typeof(TaskManager).GetField("_filterTimer", instanceFlags)?.GetValue(taskManager) == null,
                 "Expected process-filter timer resources to be released.");
+        }
+
+        private static void MainWindowActionRowsRemainVisibleAfterScaling()
+        {
+            using (var layout = new TableLayoutPanel
+            {
+                ColumnCount = 1,
+                RowCount = 2,
+                Size = new Size(800, 500)
+            })
+            using (var content = new Panel
+            {
+                Dock = DockStyle.Fill,
+                Margin = Padding.Empty
+            })
+            using (var actions = new FlowLayoutPanel())
+            using (var button = new Button
+            {
+                Margin = Padding.Empty,
+                Size = new Size(90, 28),
+                Text = "Clear log"
+            })
+            {
+                layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+                layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+                layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40F));
+                layout.Controls.Add(content, 0, 0);
+                layout.Controls.Add(actions, 0, 1);
+                actions.Controls.Add(button);
+
+                FrmMain.ConfigureBottomActionRow(layout, actions);
+                AssertActionButtonFits(layout, actions, button, "normal scale");
+
+                layout.Scale(new SizeF(1.5F, 1.5F));
+                layout.Size = new Size(1200, 750);
+                AssertActionButtonFits(layout, actions, button, "150% scale");
+
+                actions.Visible = false;
+                layout.PerformLayout();
+                AssertEqual(layout.ClientSize.Height, content.Height);
+            }
+        }
+
+        private static void AssertActionButtonFits(
+            TableLayoutPanel layout,
+            FlowLayoutPanel actions,
+            Button button,
+            string scenario)
+        {
+            layout.PerformLayout();
+            actions.PerformLayout();
+
+            AssertTrue(layout.RowStyles[1].SizeType == SizeType.AutoSize,
+                $"Expected a content-sized action row at {scenario}.");
+            AssertTrue(actions.Bottom <= layout.ClientSize.Height,
+                $"Expected the action row to remain inside the layout at {scenario}.");
+            AssertTrue(button.Top >= actions.Padding.Top,
+                $"Expected the action button to retain its top inset at {scenario}.");
+            AssertTrue(button.Bottom <= actions.ClientSize.Height - actions.Padding.Bottom,
+                $"Expected the action button to retain its bottom inset at {scenario}.");
+            AssertTrue(button.Right <= actions.ClientSize.Width - actions.Padding.Right,
+                $"Expected the action button to retain its right inset at {scenario}.");
         }
 
         private static void SettingsCopiesSecuredProfilesPathWithoutShellActivation()

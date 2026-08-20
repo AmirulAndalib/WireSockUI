@@ -418,7 +418,7 @@ namespace WireSockUI.Forms
             this.layoutDetails.Padding = new System.Windows.Forms.Padding(0);
             this.layoutDetails.RowCount = 2;
             this.layoutDetails.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
-            this.layoutDetails.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 40F));
+            this.layoutDetails.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
             this.layoutDetails.Size = new System.Drawing.Size(554, 512);
             this.layoutDetails.TabIndex = 0;
             //
@@ -435,7 +435,7 @@ namespace WireSockUI.Forms
             this.pnlRight.Name = "pnlRight";
             this.pnlRight.Padding = new System.Windows.Forms.Padding(8);
             this.resControls.SetResourceKey(this.pnlRight, null);
-            this.pnlRight.Size = new System.Drawing.Size(554, 472);
+            this.pnlRight.Size = new System.Drawing.Size(554, 466);
             this.pnlRight.TabIndex = 17;
             // 
             // gbxState
@@ -537,22 +537,24 @@ namespace WireSockUI.Forms
             // 
             // pnlProfileActions
             //
+            this.pnlProfileActions.AutoSize = true;
+            this.pnlProfileActions.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
             this.pnlProfileActions.BackColor = System.Drawing.SystemColors.Control;
             this.pnlProfileActions.Controls.Add(this.btnEdit);
             this.pnlProfileActions.Dock = System.Windows.Forms.DockStyle.Fill;
             this.pnlProfileActions.FlowDirection = System.Windows.Forms.FlowDirection.RightToLeft;
-            this.pnlProfileActions.Location = new System.Drawing.Point(0, 472);
+            this.pnlProfileActions.Location = new System.Drawing.Point(0, 466);
             this.pnlProfileActions.Margin = new System.Windows.Forms.Padding(0);
             this.pnlProfileActions.Name = "pnlProfileActions";
-            this.pnlProfileActions.Padding = new System.Windows.Forms.Padding(0, 6, 8, 6);
-            this.pnlProfileActions.Size = new System.Drawing.Size(554, 40);
+            this.pnlProfileActions.Padding = new System.Windows.Forms.Padding(0, 8, 8, 10);
+            this.pnlProfileActions.Size = new System.Drawing.Size(554, 46);
             this.pnlProfileActions.TabIndex = 18;
             this.pnlProfileActions.WrapContents = false;
             //
             // btnEdit
             //
             this.btnEdit.Enabled = false;
-            this.btnEdit.Location = new System.Drawing.Point(474, 8);
+            this.btnEdit.Location = new System.Drawing.Point(466, 8);
             this.btnEdit.Margin = new System.Windows.Forms.Padding(0);
             this.btnEdit.Name = "btnEdit";
             this.resControls.SetResourceKey(this.btnEdit, "ButtonEdit");
@@ -587,28 +589,30 @@ namespace WireSockUI.Forms
             this.layoutLog.Name = "layoutLog";
             this.layoutLog.RowCount = 2;
             this.layoutLog.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
-            this.layoutLog.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 40F));
+            this.layoutLog.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
             this.layoutLog.Size = new System.Drawing.Size(792, 514);
             this.layoutLog.TabIndex = 0;
             //
             // pnlLogActions
             //
+            this.pnlLogActions.AutoSize = true;
+            this.pnlLogActions.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
             this.pnlLogActions.BackColor = System.Drawing.SystemColors.Control;
             this.pnlLogActions.Controls.Add(this.btnClearLog);
             this.pnlLogActions.Dock = System.Windows.Forms.DockStyle.Fill;
             this.pnlLogActions.FlowDirection = System.Windows.Forms.FlowDirection.RightToLeft;
-            this.pnlLogActions.Location = new System.Drawing.Point(0, 474);
+            this.pnlLogActions.Location = new System.Drawing.Point(0, 468);
             this.pnlLogActions.Margin = new System.Windows.Forms.Padding(0);
             this.pnlLogActions.Name = "pnlLogActions";
-            this.pnlLogActions.Padding = new System.Windows.Forms.Padding(0, 8, 0, 0);
-            this.pnlLogActions.Size = new System.Drawing.Size(792, 40);
+            this.pnlLogActions.Padding = new System.Windows.Forms.Padding(0, 8, 8, 10);
+            this.pnlLogActions.Size = new System.Drawing.Size(792, 46);
             this.pnlLogActions.TabIndex = 1;
             this.pnlLogActions.WrapContents = false;
             //
             // btnClearLog
             //
             this.btnClearLog.Enabled = false;
-            this.btnClearLog.Location = new System.Drawing.Point(702, 8);
+            this.btnClearLog.Location = new System.Drawing.Point(694, 8);
             this.btnClearLog.Margin = new System.Windows.Forms.Padding(0);
             this.btnClearLog.Name = "btnClearLog";
             this.resControls.SetResourceKey(this.btnClearLog, "ButtonClearLog");
@@ -634,7 +638,7 @@ namespace WireSockUI.Forms
             this.lstLog.OwnerDraw = true;
             this.resControls.SetResourceKey(this.lstLog, null);
             this.lstLog.ShowGroups = false;
-            this.lstLog.Size = new System.Drawing.Size(792, 474);
+            this.lstLog.Size = new System.Drawing.Size(792, 468);
             this.lstLog.TabIndex = 0;
             this.lstLog.UseCompatibleStateImageBehavior = false;
             this.lstLog.View = System.Windows.Forms.View.Details;
