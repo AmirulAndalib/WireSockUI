@@ -277,6 +277,7 @@ namespace WireSockUI.Tests
                 { "Shell link PROPVARIANT interop is architecture safe and type checked", ShellLinkPropVariantInteropIsSafe },
                 { "Windows compatibility manifest enables modern behavior", WindowsCompatibilityManifestEnablesModernBehavior },
                 { "Elevation manifest establishes a native pre-CLR boundary", ElevationManifestEstablishesNativePreClrBoundary },
+                { "MSI builds materialize ordinary output files", MsiBuildsMaterializeOrdinaryOutputFiles },
                 { "Browser activation permits only credential-free HTTPS", BrowserActivationPermitsOnlyCredentialFreeHttps },
                 { "Windows argument quoting preserves shell targets", WindowsArgumentQuotingPreservesShellTargets },
                 { "Program rejects non-local application paths", ProgramRejectsNonLocalApplicationPaths },
@@ -4771,6 +4772,16 @@ namespace WireSockUI.Tests
             AssertEqual(
                 WireSockUI.Program.NativeLauncherFileName + ".config",
                 Path.GetFileName(WireSockUI.Program.ApplicationConfigurationPath));
+        }
+
+        private static void MsiBuildsMaterializeOrdinaryOutputFiles()
+        {
+            var buildScript = File.ReadAllText(FindRepositoryFile("scripts", "Build-Msi.ps1"));
+            AssertTrue(
+                buildScript.IndexOf(
+                    "--property:CreateHardLinksForCopyFilesToOutputDirectoryIfPossible=false",
+                    StringComparison.Ordinal) >= 0,
+                "MSI builds must disable WiX's default output hard links so release validators receive ordinary files.");
         }
 
         private static void BrowserActivationPermitsOnlyCredentialFreeHttps()
