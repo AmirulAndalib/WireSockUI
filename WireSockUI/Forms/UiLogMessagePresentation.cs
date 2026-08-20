@@ -14,7 +14,7 @@ namespace WireSockUI.Forms
                 return true;
 
             WireguardBoosterExports.WgbLogLevel messageLevel;
-            if ((!TryExtractJsonStringProperty(message, "level", out var structuredLevel) ||
+            if ((!TryExtractTopLevelJsonStringProperty(message, "level", out var structuredLevel) ||
                  !TryMapLevel(structuredLevel, out messageLevel)) &&
                 !TryClassify(FormatForDisplay(message), out messageLevel))
                 return true;
@@ -27,36 +27,38 @@ namespace WireSockUI.Forms
             if (string.IsNullOrEmpty(message))
                 return message ?? string.Empty;
 
-            return TryExtractJsonStringProperty(message, "message", out var extractedMessage)
+            return TryExtractTopLevelJsonStringProperty(message, "message", out var extractedMessage)
                 ? extractedMessage
                 : message;
         }
 
         private static bool TryClassify(string message, out WireguardBoosterExports.WgbLogLevel level)
         {
-            if (Contains(message, "[FILTER]") || Contains(message, "[TRACE]") ||
-                Contains(message, "[DEBUG]"))
+            var normalizedMessage = message?.TrimStart();
+
+            if (StartsWith(normalizedMessage, "[ERROR]") || StartsWith(normalizedMessage, "ERROR:"))
             {
-                level = WireguardBoosterExports.WgbLogLevel.Debug;
+                level = WireguardBoosterExports.WgbLogLevel.Error;
                 return true;
             }
 
-            if (Contains(message, "[INFO]"))
-            {
-                level = WireguardBoosterExports.WgbLogLevel.Info;
-                return true;
-            }
-
-            if (Contains(message, "[WARNING]") || Contains(message, "[WARN]") ||
-                Contains(message, "WARNING:") || Contains(message, "WARN:"))
+            if (StartsWith(normalizedMessage, "[WARNING]") || StartsWith(normalizedMessage, "[WARN]") ||
+                StartsWith(normalizedMessage, "WARNING:") || StartsWith(normalizedMessage, "WARN:"))
             {
                 level = WireguardBoosterExports.WgbLogLevel.Warning;
                 return true;
             }
 
-            if (Contains(message, "[ERROR]") || Contains(message, "ERROR:"))
+            if (StartsWith(normalizedMessage, "[INFO]"))
             {
-                level = WireguardBoosterExports.WgbLogLevel.Error;
+                level = WireguardBoosterExports.WgbLogLevel.Info;
+                return true;
+            }
+
+            if (StartsWith(normalizedMessage, "[TRACE]") || StartsWith(normalizedMessage, "[DEBUG]") ||
+                IsFilterTrafficTrace(normalizedMessage))
+            {
+                level = WireguardBoosterExports.WgbLogLevel.Debug;
                 return true;
             }
 
@@ -81,9 +83,21 @@ namespace WireSockUI.Forms
             }
         }
 
-        private static bool Contains(string message, string value)
+        private static bool IsFilterTrafficTrace(string message)
         {
-            return message?.IndexOf(value, StringComparison.OrdinalIgnoreCase) >= 0;
+            const string filterPrefix = "[FILTER]:";
+            if (!StartsWith(message, filterPrefix))
+                return false;
+
+            var trace = message.Substring(filterPrefix.Length).TrimStart();
+            var hasPacketProtocol = StartsWith(trace, "UDP :") || StartsWith(trace, "TCP :") ||
+                                    StartsWith(trace, "ICMP :") || StartsWith(trace, "ICMPV6 :");
+            return hasPacketProtocol && trace.IndexOf(" -> ", StringComparison.Ordinal) > 0;
+        }
+
+        private static bool StartsWith(string message, string value)
+        {
+            return message?.StartsWith(value, StringComparison.OrdinalIgnoreCase) == true;
         }
 
         private static bool TryMapLevel(string value, out WireguardBoosterExports.WgbLogLevel level)
@@ -107,23 +121,78 @@ namespace WireSockUI.Forms
             return true;
         }
 
-        private static bool TryExtractJsonStringProperty(string value, string propertyName, out string propertyValue)
+        private static bool TryExtractTopLevelJsonStringProperty(
+            string value,
+            string propertyName,
+            out string propertyValue)
         {
             propertyValue = null;
             if (string.IsNullOrEmpty(value) || string.IsNullOrEmpty(propertyName))
                 return false;
 
-            var quotedPropertyName = $"\"{propertyName}\"";
-            var propertyIndex = value.IndexOf(quotedPropertyName, StringComparison.OrdinalIgnoreCase);
-            if (propertyIndex < 0)
-                return false;
-
-            var index = propertyIndex + quotedPropertyName.Length;
+            var index = 0;
             SkipWhitespace(value, ref index);
-            if (index >= value.Length || value[index++] != ':')
+            if (index >= value.Length || value[index++] != '{')
                 return false;
 
             SkipWhitespace(value, ref index);
+            var propertySeen = false;
+            var propertyFound = false;
+            string candidateValue = null;
+            if (index < value.Length && value[index] == '}')
+                index++;
+            else
+                while (true)
+                {
+                    if (!TryReadJsonString(value, ref index, out var currentPropertyName))
+                        return false;
+
+                    SkipWhitespace(value, ref index);
+                    if (index >= value.Length || value[index++] != ':')
+                        return false;
+
+                    SkipWhitespace(value, ref index);
+                    if (string.Equals(currentPropertyName, propertyName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (propertySeen)
+                            return false;
+                        propertySeen = true;
+                        if (index < value.Length && value[index] == '"')
+                        {
+                            if (!TryReadJsonString(value, ref index, out candidateValue))
+                                return false;
+                            propertyFound = true;
+                        }
+                        else if (!TrySkipJsonValue(value, ref index, 0))
+                            return false;
+                    }
+                    else if (!TrySkipJsonValue(value, ref index, 0))
+                        return false;
+
+                    SkipWhitespace(value, ref index);
+                    if (index >= value.Length)
+                        return false;
+                    if (value[index] == '}')
+                    {
+                        index++;
+                        break;
+                    }
+                    if (value[index++] != ',')
+                        return false;
+                    SkipWhitespace(value, ref index);
+                }
+
+            SkipWhitespace(value, ref index);
+            if (index != value.Length || !propertyFound)
+                return false;
+
+            propertyValue = candidateValue;
+            return true;
+        }
+
+        private static bool TryReadJsonString(string value, ref int index, out string result)
+        {
+            result = null;
             if (index >= value.Length || value[index++] != '"')
                 return false;
 
@@ -133,12 +202,14 @@ namespace WireSockUI.Forms
                 var character = value[index++];
                 if (character == '"')
                 {
-                    propertyValue = builder.ToString();
+                    result = builder.ToString();
                     return true;
                 }
 
                 if (character != '\\')
                 {
+                    if (character < 0x20)
+                        return false;
                     builder.Append(character);
                     continue;
                 }
@@ -182,6 +253,159 @@ namespace WireSockUI.Forms
             return false;
         }
 
+        private static bool TrySkipJsonValue(string value, ref int index, int depth)
+        {
+            const int maxDepth = 32;
+            if (depth > maxDepth || index >= value.Length)
+                return false;
+
+            switch (value[index])
+            {
+                case '"':
+                    return TryReadJsonString(value, ref index, out _);
+                case '{':
+                    return TrySkipJsonObject(value, ref index, depth + 1);
+                case '[':
+                    return TrySkipJsonArray(value, ref index, depth + 1);
+                case 't':
+                    return TryConsumeJsonLiteral(value, ref index, "true");
+                case 'f':
+                    return TryConsumeJsonLiteral(value, ref index, "false");
+                case 'n':
+                    return TryConsumeJsonLiteral(value, ref index, "null");
+                default:
+                    return TrySkipJsonNumber(value, ref index);
+            }
+        }
+
+        private static bool TrySkipJsonObject(string value, ref int index, int depth)
+        {
+            index++;
+            SkipWhitespace(value, ref index);
+            if (index < value.Length && value[index] == '}')
+            {
+                index++;
+                return true;
+            }
+
+            while (index < value.Length)
+            {
+                if (!TryReadJsonString(value, ref index, out _))
+                    return false;
+                SkipWhitespace(value, ref index);
+                if (index >= value.Length || value[index++] != ':')
+                    return false;
+                SkipWhitespace(value, ref index);
+                if (!TrySkipJsonValue(value, ref index, depth))
+                    return false;
+                SkipWhitespace(value, ref index);
+                if (index >= value.Length)
+                    return false;
+                if (value[index] == '}')
+                {
+                    index++;
+                    return true;
+                }
+                if (value[index++] != ',')
+                    return false;
+                SkipWhitespace(value, ref index);
+            }
+
+            return false;
+        }
+
+        private static bool TrySkipJsonArray(string value, ref int index, int depth)
+        {
+            index++;
+            SkipWhitespace(value, ref index);
+            if (index < value.Length && value[index] == ']')
+            {
+                index++;
+                return true;
+            }
+
+            while (index < value.Length)
+            {
+                if (!TrySkipJsonValue(value, ref index, depth))
+                    return false;
+                SkipWhitespace(value, ref index);
+                if (index >= value.Length)
+                    return false;
+                if (value[index] == ']')
+                {
+                    index++;
+                    return true;
+                }
+                if (value[index++] != ',')
+                    return false;
+                SkipWhitespace(value, ref index);
+            }
+
+            return false;
+        }
+
+        private static bool TryConsumeJsonLiteral(string value, ref int index, string literal)
+        {
+            if (index + literal.Length > value.Length ||
+                string.Compare(value, index, literal, 0, literal.Length, StringComparison.Ordinal) != 0)
+                return false;
+
+            index += literal.Length;
+            return true;
+        }
+
+        private static bool TrySkipJsonNumber(string value, ref int index)
+        {
+            var start = index;
+            if (index < value.Length && value[index] == '-')
+                index++;
+
+            if (index >= value.Length)
+                return false;
+            if (value[index] == '0')
+            {
+                index++;
+                if (index < value.Length && IsJsonDigit(value[index]))
+                    return false;
+            }
+            else
+            {
+                if (value[index] < '1' || value[index] > '9')
+                    return false;
+                while (index < value.Length && IsJsonDigit(value[index]))
+                    index++;
+            }
+
+            if (index < value.Length && value[index] == '.')
+            {
+                index++;
+                var fractionStart = index;
+                while (index < value.Length && IsJsonDigit(value[index]))
+                    index++;
+                if (index == fractionStart)
+                    return false;
+            }
+
+            if (index < value.Length && (value[index] == 'e' || value[index] == 'E'))
+            {
+                index++;
+                if (index < value.Length && (value[index] == '+' || value[index] == '-'))
+                    index++;
+                var exponentStart = index;
+                while (index < value.Length && IsJsonDigit(value[index]))
+                    index++;
+                if (index == exponentStart)
+                    return false;
+            }
+
+            return index > start;
+        }
+
+        private static bool IsJsonDigit(char character)
+        {
+            return character >= '0' && character <= '9';
+        }
+
         private static bool TryReadUnicodeEscape(string value, ref int index, out char character)
         {
             character = default;
@@ -197,7 +421,9 @@ namespace WireSockUI.Forms
 
         private static void SkipWhitespace(string value, ref int index)
         {
-            while (index < value.Length && char.IsWhiteSpace(value[index]))
+            while (index < value.Length &&
+                   (value[index] == ' ' || value[index] == '\t' ||
+                    value[index] == '\r' || value[index] == '\n'))
                 index++;
         }
     }

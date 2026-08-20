@@ -6559,6 +6559,25 @@ namespace WireSockUI.Tests
                 "Error logging should suppress structured info output.");
             AssertTrue(UiLogMessagePresentation.ShouldDisplay("[ERROR]: tunnel failed", error),
                 "Error logging should retain explicitly classified errors.");
+            AssertTrue(UiLogMessagePresentation.ShouldDisplay(
+                    "[ERROR]: [FILTER] failed to install packet rule", error),
+                "An error that names the filter component must not be reclassified as debug output.");
+            AssertTrue(UiLogMessagePresentation.ShouldDisplay(
+                    "[FILTER]: failed to install packet rule", error),
+                "Unclassified filter-component failures must remain visible at the error level.");
+            AssertTrue(UiLogMessagePresentation.ShouldDisplay(
+                    "Tunnel failed while processing [DEBUG] metadata", error),
+                "Severity markers embedded in diagnostic text must not reclassify the record.");
+            AssertTrue(UiLogMessagePresentation.ShouldDisplay(
+                    "Failed to parse response: {\"level\":\"debug\"}", error),
+                "Embedded JSON fragments must not supply the severity of an unstructured diagnostic.");
+            AssertTrue(UiLogMessagePresentation.ShouldDisplay(
+                    "{\"message\":\"Tunnel failed\",\"context\":{\"level\":\"debug\"}}", error),
+                "Nested JSON properties must not override the severity of the top-level record.");
+            AssertFalse(UiLogMessagePresentation.ShouldDisplay(
+                    "{\"level\":\"debug\",\"message\":\"packet\",\"context\":[true,2,{\"ok\":null}]}",
+                    error),
+                "A valid top-level structured severity should still be honored with nested context.");
             AssertTrue(UiLogMessagePresentation.ShouldDisplay("Unable to query tunnel state", error),
                 "Unclassified manager diagnostics should remain visible rather than hiding possible errors.");
 
@@ -6575,6 +6594,12 @@ namespace WireSockUI.Tests
 
             AssertEqual("line\n\"quoted\"", UiLogMessagePresentation.FormatForDisplay(
                 "{\"message\":\"line\\n\\\"quoted\\\"\"}"));
+            const string prefixedJson = "Diagnostic prefix {\"message\":\"inner detail\"}";
+            AssertEqual(prefixedJson, UiLogMessagePresentation.FormatForDisplay(prefixedJson));
+            const string trailingJson = "{\"message\":\"inner detail\"} trailing";
+            AssertEqual(trailingJson, UiLogMessagePresentation.FormatForDisplay(trailingJson));
+            const string invalidEnvelope = "{\"message\":\"inner detail\",\"context\":[1,]}";
+            AssertEqual(invalidEnvelope, UiLogMessagePresentation.FormatForDisplay(invalidEnvelope));
             const string malformed = "{\"message\":\"unterminated}";
             AssertEqual(malformed, UiLogMessagePresentation.FormatForDisplay(malformed));
         }
