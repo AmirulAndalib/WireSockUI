@@ -49,6 +49,10 @@ jobs:
           ./scripts/Test-WorkflowSecurity.Tests.ps1
           ./scripts/Test-WorkflowSecurity.ps1
 
+      - name: Test release SBOM validator
+        shell: pwsh
+        run: ./scripts/Test-ReleaseSbom.Tests.ps1
+
       - name: Setup dotnet
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
         with:

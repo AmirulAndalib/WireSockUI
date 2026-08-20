@@ -173,7 +173,7 @@ $baseSbom = [ordered]@{
     spdxVersion = 'SPDX-2.2'
     dataLicense = 'CC0-1.0'
     SPDXID = 'SPDXRef-DOCUMENT'
-    name = 'WireSockUI-test'
+    name = 'WireSockUI-test 1.2.3'
     documentNamespace = 'https://example.test/sbom/1'
     documentDescribes = @('SPDXRef-RootPackage')
     packages = @(
@@ -253,6 +253,14 @@ try {
         -Name 'valid-both-containment-representations' `
         -Sbom (Copy-JsonObject -Value $baseSbom) `
         -LockFile (Copy-JsonObject -Value $baseLock)
+
+    $packageNameOnlyDocument = Copy-JsonObject -Value $baseSbom
+    $packageNameOnlyDocument.name = 'WireSockUI-test'
+    Assert-Rejected `
+        -Name 'document-name-missing-version' `
+        -Sbom $packageNameOnlyDocument `
+        -LockFile (Copy-JsonObject -Value $baseLock) `
+        -MessageFragment 'expected SPDX 2.2'
 
     $hasFilesOnly = Copy-JsonObject -Value $baseSbom
     $hasFilesOnly.relationships = @(
