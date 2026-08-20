@@ -40,6 +40,8 @@ namespace WireSockUI.Forms
         {
             InitializeComponent();
 
+            Font = SystemFonts.MessageBoxFont;
+
             using (var identity = WindowsIdentity.GetCurrent())
                 _currentUserSid = identity.User?.Value;
 
@@ -56,9 +58,9 @@ namespace WireSockUI.Forms
                 }
             }
 
-            // Ensure the process list rows fill the entire width, but no scrollbar appears
-            if (lstProcesses != null && lstProcesses.Columns.Count > 0)
-                lstProcesses.Columns[0].Width = lstProcesses.Size.Width - 18;
+            // Keep the single process column aligned with the resizable viewport.
+            UpdateProcessColumnWidth();
+            lstProcesses.ClientSizeChanged += OnProcessListClientSizeChanged;
 
             // Safely set the cue banner text
             if (txtSearch != null && Resources.ProcessesSearchCue != null)
@@ -73,6 +75,19 @@ namespace WireSockUI.Forms
         }
 
         public string ReturnValue { get; private set; }
+
+        private void OnProcessListClientSizeChanged(object sender, EventArgs e)
+        {
+            UpdateProcessColumnWidth();
+        }
+
+        private void UpdateProcessColumnWidth()
+        {
+            if (lstProcesses == null || lstProcesses.Columns.Count == 0)
+                return;
+
+            lstProcesses.Columns[0].Width = Math.Max(0, lstProcesses.ClientSize.Width - 4);
+        }
 
         private async void OnTaskManagerShown(object sender, EventArgs e)
         {
@@ -312,6 +327,7 @@ namespace WireSockUI.Forms
 
             _managedResourcesDisposed = true;
             Shown -= OnTaskManagerShown;
+            lstProcesses.ClientSizeChanged -= OnProcessListClientSizeChanged;
             if (_filterTimer != null)
             {
                 _filterTimer.Stop();

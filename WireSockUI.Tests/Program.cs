@@ -264,6 +264,7 @@ namespace WireSockUI.Tests
                 { "Editor validates Amnezia options", EditorValidatesAmneziaOptions },
                 { "Image lists clone icons before delayed handle creation", ImageListsCloneIconsBeforeDelayedHandleCreation },
                 { "WinForms dialogs initialize and dispose on an STA thread", WinFormsDialogsInitializeAndDisposeOnStaThread },
+                { "WinForms dialogs use readable responsive layouts", WinFormsDialogsUseReadableResponsiveLayouts },
                 { "Main window action rows remain visible after scaling", MainWindowActionRowsRemainVisibleAfterScaling },
                 { "Settings copies the secured profiles path without shell activation", SettingsCopiesSecuredProfilesPathWithoutShellActivation },
                 { "Editor bounds synchronous syntax highlighting", EditorBoundsSynchronousSyntaxHighlighting },
@@ -4153,6 +4154,146 @@ namespace WireSockUI.Tests
             AssertTrue(
                 typeof(TaskManager).GetField("_filterTimer", instanceFlags)?.GetValue(taskManager) == null,
                 "Expected process-filter timer resources to be released.");
+        }
+
+        private static void WinFormsDialogsUseReadableResponsiveLayouts()
+        {
+            using (var settings = new FrmSettings())
+            {
+                AssertDialogUsesSystemFont(settings, "settings");
+                AssertTrue(settings.ClientSize.Width >= 360 && settings.ClientSize.Height >= 360,
+                    "Expected the settings dialog to provide comfortable default spacing.");
+                AssertTrue(settings.FormBorderStyle == FormBorderStyle.FixedDialog,
+                    "Expected the settings window to use dialog chrome.");
+
+                var save = GetRequiredPrivateControl<Button>(settings, "btnSave");
+                var copy = GetRequiredPrivateControl<Button>(settings, "btnCopyProfilesFolderPath");
+                var killSwitch = GetRequiredPrivateControl<CheckBox>(settings, "chkEnableKillSwitch");
+                var logLevel = GetRequiredPrivateControl<ComboBox>(settings, "ddlLogLevel");
+                settings.PerformLayout();
+                AssertControlFits(settings, killSwitch, "settings Kill Switch");
+                AssertControlFits(settings, logLevel, "settings log level");
+                AssertControlFits(settings, save, "settings Save action");
+                AssertControlFits(settings, copy, "settings profiles-folder action");
+                AssertTrue(save.Height >= 30 && copy.Height >= 30,
+                    "Expected settings actions to have a comfortable click target.");
+
+                settings.Scale(new SizeF(1.5F, 1.5F));
+                settings.PerformLayout();
+                AssertControlFits(settings, killSwitch, "scaled settings Kill Switch");
+                AssertControlFits(settings, logLevel, "scaled settings log level");
+                AssertControlFits(settings, save, "scaled settings Save action");
+                AssertControlFits(settings, copy, "scaled settings profiles-folder action");
+            }
+
+            using (var editor = new FrmEdit())
+            {
+                AssertDialogUsesSystemFont(editor, "profile editor");
+                AssertTrue(editor.FormBorderStyle == FormBorderStyle.Sizable,
+                    "Expected the profile editor to be resizable.");
+                AssertTrue(editor.MaximizeBox, "Expected the profile editor to support maximizing.");
+                AssertTrue(editor.MinimumSize.Width >= 700 && editor.MinimumSize.Height >= 500,
+                    "Expected the profile editor to retain a readable minimum size.");
+
+                var editorText = GetRequiredPrivateControl<RichTextBox>(editor, "txtEditor");
+                var bottom = GetRequiredPrivateControl<Panel>(editor, "pnlBottom");
+                var save = GetRequiredPrivateControl<Button>(editor, "btnSave");
+                var cancel = GetRequiredPrivateControl<Button>(editor, "btnCancel");
+                AssertTrue(string.Equals(editorText.Font.Name, "Consolas", StringComparison.OrdinalIgnoreCase) &&
+                           editorText.Font.SizeInPoints >= 10F,
+                    "Expected a readable modern monospace editor font.");
+
+                var originalEditorSize = editorText.ClientSize;
+                editor.ClientSize = new Size(editor.ClientSize.Width + 180, editor.ClientSize.Height + 120);
+                editor.PerformLayout();
+                AssertTrue(editorText.ClientSize.Width > originalEditorSize.Width &&
+                           editorText.ClientSize.Height > originalEditorSize.Height,
+                    "Expected the profile editor content to grow with the dialog.");
+                AssertControlFits(editor, bottom, "profile editor action row");
+                AssertControlFits(bottom, save, "profile editor Save action");
+                AssertControlFits(bottom, cancel, "profile editor Cancel action");
+
+                editor.Scale(new SizeF(1.5F, 1.5F));
+                editor.PerformLayout();
+                AssertControlFits(editor, bottom, "scaled profile editor action row");
+                AssertControlFits(bottom, save, "scaled profile editor Save action");
+                AssertControlFits(bottom, cancel, "scaled profile editor Cancel action");
+            }
+
+            using (var taskManager = new TaskManager())
+            {
+                AssertDialogUsesSystemFont(taskManager, "process picker");
+                AssertTrue(taskManager.FormBorderStyle == FormBorderStyle.Sizable,
+                    "Expected the process picker to be resizable.");
+                AssertTrue(taskManager.MaximizeBox, "Expected the process picker to support maximizing.");
+                AssertTrue(taskManager.MinimumSize.Width >= 400 && taskManager.MinimumSize.Height >= 380,
+                    "Expected the process picker to retain a readable minimum size.");
+
+                var processList = GetRequiredPrivateControl<ListView>(taskManager, "lstProcesses");
+                var filters = GetRequiredPrivateControl<Panel>(taskManager, "pnlFilters");
+                var search = GetRequiredPrivateControl<TextBox>(taskManager, "txtSearch");
+                var refresh = GetRequiredPrivateControl<Button>(taskManager, "btnRefresh");
+                var originalListSize = processList.ClientSize;
+                var originalSearchWidth = search.Width;
+                taskManager.ClientSize = new Size(
+                    taskManager.ClientSize.Width + 180,
+                    taskManager.ClientSize.Height + 120);
+                taskManager.PerformLayout();
+                filters.PerformLayout();
+
+                AssertTrue(processList.ClientSize.Width > originalListSize.Width &&
+                           processList.ClientSize.Height > originalListSize.Height,
+                    "Expected the process list to grow with the dialog.");
+                AssertTrue(search.Width > originalSearchWidth,
+                    "Expected the process search field to grow with the dialog.");
+                AssertControlFits(taskManager, processList, "process list");
+                AssertControlFits(taskManager, filters, "process filter row");
+                AssertControlFits(filters, search, "process search field");
+                AssertControlFits(filters, refresh, "process refresh action");
+                AssertTrue(processList.Bottom <= filters.Top,
+                    "Expected the process list to remain above the filter row.");
+                AssertTrue(processList.Columns[0].Width <= processList.ClientSize.Width &&
+                           processList.Columns[0].Width >= processList.ClientSize.Width - 8,
+                    "Expected the process column to follow the resizable viewport.");
+
+                taskManager.Scale(new SizeF(1.5F, 1.5F));
+                taskManager.PerformLayout();
+                filters.PerformLayout();
+                AssertControlFits(taskManager, processList, "scaled process list");
+                AssertControlFits(taskManager, filters, "scaled process filter row");
+                AssertControlFits(filters, search, "scaled process search field");
+                AssertControlFits(filters, refresh, "scaled process refresh action");
+                AssertTrue(processList.Bottom <= filters.Top,
+                    "Expected the scaled process list to remain above the filter row.");
+            }
+        }
+
+        private static T GetRequiredPrivateControl<T>(object owner, string fieldName) where T : Control
+        {
+            var control = owner.GetType()
+                .GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic)
+                ?.GetValue(owner) as T;
+            if (control == null)
+                throw new InvalidOperationException(
+                    $"The '{fieldName}' control was not found on {owner.GetType().Name}.");
+            return control;
+        }
+
+        private static void AssertDialogUsesSystemFont(Form dialog, string description)
+        {
+            AssertTrue(
+                string.Equals(dialog.Font.Name, SystemFonts.MessageBoxFont.Name,
+                    StringComparison.OrdinalIgnoreCase) &&
+                dialog.Font.SizeInPoints >= SystemFonts.MessageBoxFont.SizeInPoints,
+                $"Expected the {description} dialog to use the Windows message font.");
+        }
+
+        private static void AssertControlFits(Control parent, Control child, string description)
+        {
+            AssertTrue(child.Left >= 0 && child.Top >= 0 &&
+                       child.Right <= parent.ClientSize.Width &&
+                       child.Bottom <= parent.ClientSize.Height,
+                $"Expected {description} to remain inside its parent bounds.");
         }
 
         private static void MainWindowActionRowsRemainVisibleAfterScaling()

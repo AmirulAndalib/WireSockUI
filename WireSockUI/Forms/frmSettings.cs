@@ -1,6 +1,7 @@
 ﻿using System;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Drawing;
 using System.IO;
 using System.Security;
 using System.Security.AccessControl;
@@ -86,6 +87,8 @@ namespace WireSockUI.Forms
         public FrmSettings()
         {
             InitializeComponent();
+
+            Font = SystemFonts.MessageBoxFont;
 
             Icon = Resources.ico;
 

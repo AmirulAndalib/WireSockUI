@@ -61,78 +61,80 @@
             this.pnlTop.Location = new System.Drawing.Point(0, 0);
             this.pnlTop.Name = "pnlTop";
             this.resControls.SetResourceKey(this.pnlTop, null);
-            this.pnlTop.Size = new System.Drawing.Size(664, 40);
+            this.pnlTop.Padding = new System.Windows.Forms.Padding(12, 8, 12, 4);
+            this.pnlTop.Size = new System.Drawing.Size(760, 68);
             this.pnlTop.TabIndex = 43;
             // 
             // tableLayoutPanel1
             // 
             this.tableLayoutPanel1.ColumnCount = 2;
-            this.tableLayoutPanel1.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 130F));
-            this.tableLayoutPanel1.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle());
+            this.tableLayoutPanel1.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 112F));
+            this.tableLayoutPanel1.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
             this.tableLayoutPanel1.Controls.Add(this.lblPublicKey, 0, 1);
             this.tableLayoutPanel1.Controls.Add(this.txtPublicKey, 1, 1);
             this.tableLayoutPanel1.Controls.Add(this.txtProfileName, 1, 0);
             this.tableLayoutPanel1.Controls.Add(this.lblName, 0, 0);
             this.tableLayoutPanel1.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.tableLayoutPanel1.Location = new System.Drawing.Point(0, 0);
+            this.tableLayoutPanel1.Location = new System.Drawing.Point(12, 8);
             this.tableLayoutPanel1.Name = "tableLayoutPanel1";
             this.resControls.SetResourceKey(this.tableLayoutPanel1, null);
             this.tableLayoutPanel1.RowCount = 2;
-            this.tableLayoutPanel1.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 20F));
-            this.tableLayoutPanel1.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 20F));
-            this.tableLayoutPanel1.Size = new System.Drawing.Size(664, 40);
+            this.tableLayoutPanel1.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 50F));
+            this.tableLayoutPanel1.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 50F));
+            this.tableLayoutPanel1.Size = new System.Drawing.Size(736, 56);
             this.tableLayoutPanel1.TabIndex = 0;
             // 
             // lblPublicKey
             // 
-            this.lblPublicKey.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
-            | System.Windows.Forms.AnchorStyles.Left) 
+            this.lblPublicKey.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom)
+            | System.Windows.Forms.AnchorStyles.Left)
             | System.Windows.Forms.AnchorStyles.Right)));
             this.lblPublicKey.AutoSize = true;
-            this.lblPublicKey.Location = new System.Drawing.Point(3, 20);
+            this.lblPublicKey.Location = new System.Drawing.Point(3, 28);
             this.lblPublicKey.Name = "lblPublicKey";
-            this.lblPublicKey.Padding = new System.Windows.Forms.Padding(0, 3, 0, 0);
+            this.lblPublicKey.Padding = new System.Windows.Forms.Padding(0, 0, 8, 0);
             this.resControls.SetResourceKey(this.lblPublicKey, "EditPublicKey");
-            this.lblPublicKey.Size = new System.Drawing.Size(124, 20);
+            this.lblPublicKey.Size = new System.Drawing.Size(106, 28);
             this.lblPublicKey.TabIndex = 27;
             this.lblPublicKey.Text = "Public key:";
-            this.lblPublicKey.TextAlign = System.Drawing.ContentAlignment.TopRight;
+            this.lblPublicKey.TextAlign = System.Drawing.ContentAlignment.MiddleRight;
             // 
             // txtPublicKey
             // 
             this.txtPublicKey.BackColor = System.Drawing.SystemColors.Control;
             this.txtPublicKey.BorderStyle = System.Windows.Forms.BorderStyle.None;
             this.txtPublicKey.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.txtPublicKey.Location = new System.Drawing.Point(133, 24);
-            this.txtPublicKey.Margin = new System.Windows.Forms.Padding(3, 4, 10, 4);
+            this.txtPublicKey.Location = new System.Drawing.Point(115, 35);
+            this.txtPublicKey.Margin = new System.Windows.Forms.Padding(3, 7, 0, 4);
             this.txtPublicKey.Multiline = true;
             this.txtPublicKey.Name = "txtPublicKey";
             this.txtPublicKey.ReadOnly = true;
             this.resControls.SetResourceKey(this.txtPublicKey, null);
-            this.txtPublicKey.Size = new System.Drawing.Size(521, 12);
+            this.txtPublicKey.Size = new System.Drawing.Size(621, 17);
             this.txtPublicKey.TabIndex = 26;
             // 
             // txtProfileName
             // 
             this.txtProfileName.BorderStyle = System.Windows.Forms.BorderStyle.None;
             this.txtProfileName.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.txtProfileName.Location = new System.Drawing.Point(133, 4);
-            this.txtProfileName.Margin = new System.Windows.Forms.Padding(3, 4, 10, 4);
+            this.txtProfileName.Location = new System.Drawing.Point(115, 7);
+            this.txtProfileName.Margin = new System.Windows.Forms.Padding(3, 7, 0, 4);
             this.txtProfileName.Name = "txtProfileName";
             this.resControls.SetResourceKey(this.txtProfileName, null);
-            this.txtProfileName.Size = new System.Drawing.Size(521, 13);
+            this.txtProfileName.Size = new System.Drawing.Size(621, 17);
             this.txtProfileName.TabIndex = 25;
             // 
             // lblName
             // 
-            this.lblName.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
-            | System.Windows.Forms.AnchorStyles.Left) 
+            this.lblName.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom)
+            | System.Windows.Forms.AnchorStyles.Left)
             | System.Windows.Forms.AnchorStyles.Right)));
             this.lblName.AutoSize = true;
             this.lblName.Location = new System.Drawing.Point(3, 0);
             this.lblName.Name = "lblName";
+            this.lblName.Padding = new System.Windows.Forms.Padding(0, 0, 8, 0);
             this.resControls.SetResourceKey(this.lblName, "EditName");
-            this.lblName.Size = new System.Drawing.Size(124, 20);
+            this.lblName.Size = new System.Drawing.Size(106, 28);
             this.lblName.TabIndex = 19;
             this.lblName.Text = "Name:";
             this.lblName.TextAlign = System.Drawing.ContentAlignment.MiddleRight;
@@ -144,19 +146,20 @@
             this.pnlBottom.Controls.Add(this.btnSave);
             this.pnlBottom.Controls.Add(this.btnCancel);
             this.pnlBottom.Dock = System.Windows.Forms.DockStyle.Bottom;
-            this.pnlBottom.Location = new System.Drawing.Point(0, 392);
+            this.pnlBottom.Location = new System.Drawing.Point(0, 472);
             this.pnlBottom.Name = "pnlBottom";
             this.resControls.SetResourceKey(this.pnlBottom, null);
-            this.pnlBottom.Size = new System.Drawing.Size(664, 35);
+            this.pnlBottom.Size = new System.Drawing.Size(760, 48);
             this.pnlBottom.TabIndex = 45;
             // 
             // btnAddDisallowedApp
             // 
             this.btnAddDisallowedApp.ImageAlign = System.Drawing.ContentAlignment.MiddleLeft;
-            this.btnAddDisallowedApp.Location = new System.Drawing.Point(91, 6);
+            this.btnAddDisallowedApp.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left)));
+            this.btnAddDisallowedApp.Location = new System.Drawing.Point(128, 9);
             this.btnAddDisallowedApp.Name = "btnAddDisallowedApp";
             this.resControls.SetResourceKey(this.btnAddDisallowedApp, "EditDisallowApp");
-            this.btnAddDisallowedApp.Size = new System.Drawing.Size(85, 23);
+            this.btnAddDisallowedApp.Size = new System.Drawing.Size(116, 30);
             this.btnAddDisallowedApp.TabIndex = 3;
             this.btnAddDisallowedApp.Text = "Disallow App...";
             this.btnAddDisallowedApp.TextImageRelation = System.Windows.Forms.TextImageRelation.ImageBeforeText;
@@ -166,10 +169,11 @@
             // btnAddAllowedApp
             // 
             this.btnAddAllowedApp.ImageAlign = System.Drawing.ContentAlignment.MiddleLeft;
-            this.btnAddAllowedApp.Location = new System.Drawing.Point(12, 6);
+            this.btnAddAllowedApp.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left)));
+            this.btnAddAllowedApp.Location = new System.Drawing.Point(12, 9);
             this.btnAddAllowedApp.Name = "btnAddAllowedApp";
             this.resControls.SetResourceKey(this.btnAddAllowedApp, "EditAllowApp");
-            this.btnAddAllowedApp.Size = new System.Drawing.Size(73, 23);
+            this.btnAddAllowedApp.Size = new System.Drawing.Size(108, 30);
             this.btnAddAllowedApp.TabIndex = 2;
             this.btnAddAllowedApp.Text = "Allow App...";
             this.btnAddAllowedApp.TextImageRelation = System.Windows.Forms.TextImageRelation.ImageBeforeText;
@@ -179,10 +183,11 @@
             // btnSave
             // 
             this.btnSave.DialogResult = System.Windows.Forms.DialogResult.OK;
-            this.btnSave.Location = new System.Drawing.Point(496, 6);
+            this.btnSave.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
+            this.btnSave.Location = new System.Drawing.Point(568, 9);
             this.btnSave.Name = "btnSave";
             this.resControls.SetResourceKey(this.btnSave, "EditSave");
-            this.btnSave.Size = new System.Drawing.Size(75, 23);
+            this.btnSave.Size = new System.Drawing.Size(84, 30);
             this.btnSave.TabIndex = 1;
             this.btnSave.Text = "Save";
             this.btnSave.UseVisualStyleBackColor = true;
@@ -191,10 +196,11 @@
             // btnCancel
             // 
             this.btnCancel.DialogResult = System.Windows.Forms.DialogResult.Cancel;
-            this.btnCancel.Location = new System.Drawing.Point(577, 6);
+            this.btnCancel.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
+            this.btnCancel.Location = new System.Drawing.Point(664, 9);
             this.btnCancel.Name = "btnCancel";
             this.resControls.SetResourceKey(this.btnCancel, "EditCancel");
-            this.btnCancel.Size = new System.Drawing.Size(75, 23);
+            this.btnCancel.Size = new System.Drawing.Size(84, 30);
             this.btnCancel.TabIndex = 0;
             this.btnCancel.Text = "Cancel";
             this.btnCancel.UseVisualStyleBackColor = true;
@@ -204,11 +210,11 @@
             this.txtEditor.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
             this.txtEditor.DetectUrls = false;
             this.txtEditor.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.txtEditor.Font = new System.Drawing.Font("Courier New", 9.75F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
-            this.txtEditor.Location = new System.Drawing.Point(0, 40);
+            this.txtEditor.Font = new System.Drawing.Font("Consolas", 10F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
+            this.txtEditor.Location = new System.Drawing.Point(0, 68);
             this.txtEditor.Name = "txtEditor";
             this.resControls.SetResourceKey(this.txtEditor, null);
-            this.txtEditor.Size = new System.Drawing.Size(664, 352);
+            this.txtEditor.Size = new System.Drawing.Size(760, 404);
             this.txtEditor.TabIndex = 46;
             this.txtEditor.Text = "";
             this.txtEditor.TextChanged += new System.EventHandler(this.OnProfileChanged);
@@ -256,13 +262,14 @@
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.CancelButton = this.btnCancel;
-            this.ClientSize = new System.Drawing.Size(664, 427);
+            this.ClientSize = new System.Drawing.Size(760, 520);
             this.Controls.Add(this.txtEditor);
             this.Controls.Add(this.pnlTop);
             this.Controls.Add(this.pnlBottom);
-            this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedSingle;
-            this.MaximizeBox = false;
+            this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.Sizable;
+            this.MaximizeBox = true;
             this.MinimizeBox = false;
+            this.MinimumSize = new System.Drawing.Size(720, 520);
             this.Name = "FrmEdit";
             this.resControls.SetResourceKey(this, null);
             this.StartPosition = System.Windows.Forms.FormStartPosition.CenterParent;
