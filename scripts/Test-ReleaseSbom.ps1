@@ -369,9 +369,10 @@ if ($reachablePackages.Count -ne $expectedNuGetPackages.Count) {
 }
 
 $sbom = Read-BoundedJson -Path $SbomPath -MaximumBytes $maximumSbomBytes
+$expectedDocumentName = "$ExpectedPackageName $ExpectedVersion"
 if ([string]$sbom.spdxVersion -cne 'SPDX-2.2' -or
     [string]$sbom.dataLicense -cne 'CC0-1.0' -or
-    [string]$sbom.name -cne $ExpectedPackageName) {
+    [string]$sbom.name -cne $expectedDocumentName) {
     throw 'The generated document is not the expected SPDX 2.2 package SBOM.'
 }
 
