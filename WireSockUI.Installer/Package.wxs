@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" RequiredVersion="6.0.0">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     RequiredVersion="6.0.0">
   <Package
       Name="WireSock UI"
       Manufacturer="WireSock Foundation"
@@ -26,7 +28,7 @@
         AllowSameVersionUpgrades="yes"
         DowngradeErrorMessage="A newer version of [ProductName] is already installed."
         IgnoreRemoveFailure="no"
-        MigrateFeatures="no"
+        MigrateFeatures="yes"
         Schedule="afterInstallInitialize" />
 
     <Property Id="NETFRAMEWORK472RELEASE" Secure="yes">
@@ -95,7 +97,8 @@
           ComponentGuidGenerationSeed="$(FileComponentGuidSeed)">
         <Component
             Id="ApplicationDirectorySecurity"
-            Guid="$(SecurityComponentGuid)">
+            Guid="$(SecurityComponentGuid)"
+            Feature="CoreFeature">
           <CreateFolder>
             <PermissionEx
                 Id="ApplicationDirectoryPermission"
@@ -110,7 +113,8 @@
         -->
         <Component
             Id="WireSockRuntimeHostFile"
-            Guid="$(RuntimeHostComponentGuid)">
+            Guid="$(RuntimeHostComponentGuid)"
+            Feature="CoreFeature">
           <File
               Id="WireSockRuntimeHostFile"
               Source="!(bindpath.Payload)\WireSockUI.exe"
@@ -135,7 +139,8 @@
     <StandardDirectory Id="ProgramMenuFolder">
       <Component
           Id="StartMenuShortcutComponent"
-          Guid="$(ShortcutComponentGuid)">
+          Guid="$(ShortcutComponentGuid)"
+          Feature="StartMenuShortcutFeature">
         <Shortcut
             Id="WireSockStartMenuShortcut"
             Name="WireSock UI"
@@ -155,6 +160,31 @@
       </Component>
     </StandardDirectory>
 
+    <!-- DesktopFolder resolves to the shared desktop for this per-machine package. -->
+    <StandardDirectory Id="DesktopFolder">
+      <Component
+          Id="DesktopShortcutComponent"
+          Guid="$(DesktopShortcutComponentGuid)"
+          Feature="DesktopShortcutFeature">
+        <Shortcut
+            Id="WireSockDesktopShortcut"
+            Name="WireSock UI"
+            Description="WireSock UI"
+            Target="[WireSockInstallFolder]WireSockUI.exe"
+            WorkingDirectory="WireSockInstallFolder"
+            Advertise="no"
+            Icon="WireSockUI.ico"
+            IconIndex="0" />
+        <RegistryValue
+            Root="HKLM"
+            Key="Software\WireSock Foundation\WireSock UI"
+            Name="DesktopShortcut"
+            Type="integer"
+            Value="1"
+            KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
     <!--
       Build-Msi.ps1 generates one explicit component per manifest-bound file.
       Guid="*" plus the directory seed preserves WiX's installed-path component
@@ -162,5 +192,36 @@
       force-all repair normalize ACLs that were changed after installation.
     -->
     <?include $(var.PayloadAuthoringPath) ?>
+
+    <!--
+      Only shortcut placement is configurable. The application feature and its
+      protected installation directory remain mandatory and non-configurable.
+    -->
+    <Feature
+        Id="CoreFeature"
+        Title="WireSock UI"
+        Description="WireSock UI application files"
+        Display="expand"
+        Level="1"
+        AllowAbsent="no"
+        AllowAdvertise="no">
+      <Feature
+          Id="StartMenuShortcutFeature"
+          Title="Start menu shortcut"
+          Description="Add WireSock UI to the Start menu"
+          Level="1"
+          AllowAdvertise="no" />
+      <Feature
+          Id="DesktopShortcutFeature"
+          Title="Desktop shortcut"
+          Description="Create a WireSock UI shortcut on the desktop"
+          Level="1"
+          AllowAdvertise="no" />
+    </Feature>
+
+    <ui:WixUI Id="WixUI_FeatureTree" />
+    <WixVariable
+        Id="WixUILicenseRtf"
+        Value="License.rtf" />
   </Package>
 </Wix>

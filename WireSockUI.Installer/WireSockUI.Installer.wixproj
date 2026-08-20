@@ -6,18 +6,20 @@
     <DefaultCompressionLevel>high</DefaultCompressionLevel>
     <SuppressValidation>false</SuppressValidation>
     <!--
-      ICE38/43/57 classify ProgramMenuFolder as per-user without evaluating the
-      package's forced ALLUSERS=1 context. This component deliberately uses an
-      HKLM key path because ProgramMenuFolder resolves to Common Programs for
-      this per-machine package. ICE61 is the intentional same-version upgrade.
-      scripts/Test-MsiPackage.ps1 asserts all of these invariants explicitly.
+      ICE38/43/57 classify the shell folders as per-user without evaluating the
+      package's forced ALLUSERS=1 context. These components deliberately use
+      HKLM key paths because ProgramMenuFolder and DesktopFolder resolve to the
+      shared shell folders for this per-machine package. ICE61 is the
+      intentional same-version upgrade. scripts/Test-MsiPackage.ps1 asserts all
+      of these invariants explicitly.
     -->
     <SuppressIces>ICE38;ICE43;ICE57;ICE61</SuppressIces>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <RestoreLockedMode Condition="'$(ContinuousIntegrationBuild)' == 'true'">true</RestoreLockedMode>
+    <Cultures>en-US</Cultures>
     <OutputName Condition="'$(OutputName)' == ''">WireSockUI-$(ProductVersion)-win-$(InstallerPlatform)-$(ProductFlavor)</OutputName>
-    <DefineConstants>$(DefineConstants);ProductVersion=$(ProductVersion);ProductCode=$(ProductCode);ProductFlavor=$(ProductFlavor);ProductArchitecture=$(ProductArchitecture);SecurityComponentGuid=$(SecurityComponentGuid);ShortcutComponentGuid=$(ShortcutComponentGuid);RuntimeHostComponentGuid=$(RuntimeHostComponentGuid);FileComponentGuidSeed=$(FileComponentGuidSeed);PayloadAuthoringPath=$(PayloadAuthoringPath)</DefineConstants>
+    <DefineConstants>$(DefineConstants);ProductVersion=$(ProductVersion);ProductCode=$(ProductCode);ProductFlavor=$(ProductFlavor);ProductArchitecture=$(ProductArchitecture);SecurityComponentGuid=$(SecurityComponentGuid);ShortcutComponentGuid=$(ShortcutComponentGuid);DesktopShortcutComponentGuid=$(DesktopShortcutComponentGuid);RuntimeHostComponentGuid=$(RuntimeHostComponentGuid);FileComponentGuidSeed=$(FileComponentGuidSeed);PayloadAuthoringPath=$(PayloadAuthoringPath)</DefineConstants>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(InstallerPlatform)' == '' and '$(Platform)' == 'x86'">
@@ -34,6 +36,10 @@
     <BindPath Include="$(PayloadDirectory)">
       <BindName>Payload</BindName>
     </BindPath>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.UI.wixext" Version="6.0.2" />
   </ItemGroup>
 
   <Target Name="ValidateInstallerInputs" BeforeTargets="Build">
@@ -74,7 +80,7 @@
            Text="ProductFlavor must be uwp or no-uwp." />
     <Error Condition="'$(ProductArchitecture)' != 'x86' and '$(ProductArchitecture)' != 'x64' and '$(ProductArchitecture)' != 'arm64'"
            Text="ProductArchitecture must be x86, x64, or arm64." />
-    <Error Condition="'$(SecurityComponentGuid)' == '' or '$(ShortcutComponentGuid)' == '' or '$(RuntimeHostComponentGuid)' == '' or '$(FileComponentGuidSeed)' == ''"
+    <Error Condition="'$(SecurityComponentGuid)' == '' or '$(ShortcutComponentGuid)' == '' or '$(DesktopShortcutComponentGuid)' == '' or '$(RuntimeHostComponentGuid)' == '' or '$(FileComponentGuidSeed)' == ''"
            Text="Architecture-specific component GUIDs and file-component seed must be supplied by scripts/Build-Msi.ps1." />
     <Error Condition="'$(InstallerPlatform)' != 'x86' and '$(InstallerPlatform)' != 'x64' and '$(InstallerPlatform)' != 'arm64'"
            Text="InstallerPlatform must be x86, x64, or arm64." />

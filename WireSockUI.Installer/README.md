@@ -32,8 +32,9 @@ be a canonical three-field MSI version within `255.255.65535`. For local
 installer development only, an unsigned launcher can be packaged by adding
 `-AllowUnsignedPayload`.
 
-The command restores the exactly pinned `WixToolset.Sdk/6.0.2` package unless
-`-NoRestore` is passed. It verifies the native launcher's embedded payload
+The command restores the exactly pinned `WixToolset.Sdk/6.0.2` and
+`WixToolset.UI.wixext/6.0.2` packages unless `-NoRestore` is passed. It verifies
+the native launcher's embedded payload
 manifest, copies that exact allowlist into an isolated temporary staging
 directory, builds the MSI, and validates its tables and cabinet contents. It
 produces a deterministic MSI name and a persistent validation sidecar:
@@ -80,9 +81,13 @@ active identities omitted by the complete six-package release matrix.
   full control; built-in Users receive read/execute only. The native host still
   validates the actual owner, DACL, link count, reparse state, hashes, and
   embedded payload manifest at every launch.
-- A stable, non-advertised shortcut is installed for all users as
-  `Common Programs\WireSock UI.lnk`; the shortcut targets the stable native
-  launcher and is removed on uninstall.
+- The interactive installer exposes Start-menu and desktop shortcuts as
+  independent optional features. Both are selected by default, including for
+  unattended installs, and can be changed later through Windows Installer
+  maintenance. They are stable, non-advertised all-users shortcuts at
+  `Common Programs\WireSock UI.lnk` and `Public Desktop\WireSock UI.lnk`, both
+  target the stable native launcher, and both are removed on uninstall. Major
+  upgrades migrate the selected feature states.
 - Major upgrades remove the previous product inside the MSI transaction before
   installing the new product. Files removed from later releases are therefore
   removed as product-owned files; rollback restores the prior package if the
@@ -202,10 +207,10 @@ delete other users' scheduled tasks or notification shortcuts; that per-user
 cleanup belongs to the verified application lifecycle.
 
 Uninstall removes MSI-owned runtime files, installer registry state, and the
-all-users Start Menu shortcut. It does not recursively delete unknown files and
-does not remove application-created profiles, protected preferences, recovery
-state, or logs under `%ProgramData%`. It also does not remove another user's
-Task Scheduler autorun definition. Settings from the former managed-EXE
+all-users Start-menu and desktop shortcuts. It does not recursively delete
+unknown files and does not remove application-created profiles, protected
+preferences, recovery state, or logs under `%ProgramData%`. It also does not
+remove another user's Task Scheduler autorun definition. Settings from the former managed-EXE
 `LocalFileSettingsProvider` identity are migrated separately by the application
 through a bounded, allowlisted reader; autorun is never migrated from
 `user.config`.

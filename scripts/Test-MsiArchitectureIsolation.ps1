@@ -193,6 +193,7 @@ function Test-IsCanonicalIdentityResource {
 
     if ($Resource -in @(
             'component:ApplicationDirectorySecurity',
+            'component:DesktopShortcutComponent',
             'component:StartMenuShortcutComponent')) {
         return $true
     }
@@ -342,6 +343,7 @@ foreach ($guid in $identityKeysByGuid.Keys) {
 foreach ($architecture in @('arm64', 'x64', 'x86')) {
     foreach ($requiredResource in @(
             'component:ApplicationDirectorySecurity',
+            'component:DesktopShortcutComponent',
             'component:StartMenuShortcutComponent',
             'file:WireSockUI.exe',
             'file:WireSockUI.exe.config')) {
@@ -451,6 +453,7 @@ try {
             }
             foreach ($requiredComponent in @(
                     'ApplicationDirectorySecurity',
+                    'DesktopShortcutComponent',
                     'StartMenuShortcutComponent')) {
                 if (-not $components.ContainsKey($requiredComponent)) {
                     throw "MSI '$resolvedPath' lacks required component '$requiredComponent'."
@@ -492,6 +495,7 @@ try {
                     [StringComparer]::Ordinal)
             foreach ($requiredComponent in @(
                     'ApplicationDirectorySecurity',
+                    'DesktopShortcutComponent',
                     'StartMenuShortcutComponent')) {
                 $resourceGuidsByName.Add(
                     "component:$requiredComponent",
@@ -561,6 +565,7 @@ try {
                 $componentGuid = [string]$components[$componentId].Guid
                 if ($componentId -in @(
                         'ApplicationDirectorySecurity',
+                        'DesktopShortcutComponent',
                         'StartMenuShortcutComponent')) {
                     if ($filePathsByComponent.ContainsKey($componentId)) {
                         throw "MSI '$resolvedPath' attaches a payload file to installer-owned component '$componentId'."
@@ -723,6 +728,7 @@ try {
 
             foreach ($requiredComponent in @(
                     'ApplicationDirectorySecurity',
+                    'DesktopShortcutComponent',
                     'StartMenuShortcutComponent')) {
                 $leftGuid =
                     [string]$left.Components[$requiredComponent].Guid
