@@ -398,7 +398,7 @@ namespace
 #endif
         const std::wstring message =
             L"WireSock UI cannot start safely.\r\n\r\n" + diagnostic +
-            L"\r\n\r\nRepair or reinstall WireSock UI using its signed installer and retry.";
+            L"\r\n\r\nRepair or reinstall WireSock UI using its official installer and retry.";
         MessageBoxW(
             nullptr,
             message.c_str(),
@@ -993,7 +993,7 @@ namespace
             RT_RCDATA);
         if (resource == nullptr)
         {
-            diagnostic = L"The signed launcher has no embedded payload manifest.";
+            diagnostic = L"The launcher has no embedded payload manifest.";
             return false;
         }
         const DWORD resourceSize = SizeofResource(nullptr, resource);
@@ -1467,7 +1467,7 @@ namespace
                     {
                         diagnostic =
                             L"Unexpected payload file '" + fullPath +
-                            L"' is not bound by the signed launcher.";
+                            L"' is not bound by the launcher manifest.";
                         return false;
                     }
                 }
@@ -1575,7 +1575,7 @@ namespace
             {
                 diagnostic =
                     L"Payload file '" + path +
-                    L"' does not match the signed launcher manifest.";
+                    L"' does not match the embedded launcher manifest.";
                 return false;
             }
             heldFiles.push_back(std::move(file));

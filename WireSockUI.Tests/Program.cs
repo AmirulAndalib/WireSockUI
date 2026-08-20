@@ -4728,7 +4728,9 @@ namespace WireSockUI.Tests
                          "WireSockUI.Managed.exe\"",
                          "CreateProcessW(",
                          "AssignProcessToJobObject",
-                         "JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE"
+                         "JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE",
+                         "signed installer",
+                         "signed launcher"
                      })
                 AssertFalse(
                     bootstrapSource.IndexOf(obsoleteBoundary, StringComparison.Ordinal) >= 0,
@@ -4761,7 +4763,7 @@ namespace WireSockUI.Tests
                      })
                 AssertTrue(
                     bootstrapValidation.IndexOf(requiredValidation, StringComparison.Ordinal) >= 0,
-                    $"Expected post-sign native bootstrap validation to enforce '{requiredValidation}'.");
+                    $"Expected native bootstrap validation to enforce '{requiredValidation}'.");
 
             AssertEqual(
                 WireSockUI.Program.NativeLauncherFileName,
