@@ -165,13 +165,19 @@ function global:Invoke-RestMethod {
         }
     }
     if ($Uri -match '/releases\?per_page=100&page=1$') {
-        return @($global:PublicationTestRelease)
+        Write-Output `
+            -NoEnumerate `
+            -InputObject @($global:PublicationTestRelease)
+        return
     }
     if ($Uri -match '/releases\?per_page=100&page=[2-9][0-9]*$') {
         return @()
     }
     if ($Uri -match "/releases/$global:PublicationTestReleaseId/assets\?per_page=100&page=1$") {
-        return @($global:PublicationTestRemoteAssets)
+        Write-Output `
+            -NoEnumerate `
+            -InputObject @($global:PublicationTestRemoteAssets)
+        return
     }
     if ($Uri -match "/releases/$global:PublicationTestReleaseId/assets\?per_page=100&page=[2-9][0-9]*$") {
         return @()
