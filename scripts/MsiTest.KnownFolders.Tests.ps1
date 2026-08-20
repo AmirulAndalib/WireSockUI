@@ -100,6 +100,11 @@ if ($commonProgramsFolderId -ne
     [Guid]'0139D44E-6AFE-49F2-8690-3DAFCAE6FFB8') {
     throw 'The MSI common Programs known-folder identifier has drifted.'
 }
+$commonDesktopFolderId = Get-MsiCommonDesktopFolderId
+if ($commonDesktopFolderId -ne
+    [Guid]'C4AA340D-F20F-4863-AFEF-F87EF2E6BA25') {
+    throw 'The MSI common Desktop known-folder identifier has drifted.'
+}
 
 $resolvedCommonPrograms = Get-MsiKnownFolderPath `
     -FolderId $commonProgramsFolderId
@@ -111,6 +116,17 @@ if ([string]::IsNullOrWhiteSpace($frameworkCommonPrograms) -or
         [IO.Path]::GetFullPath($frameworkCommonPrograms).TrimEnd('\'),
         [StringComparison]::OrdinalIgnoreCase)) {
     throw 'The native and framework Common Programs resolvers disagree.'
+}
+$resolvedCommonDesktop = Get-MsiKnownFolderPath `
+    -FolderId $commonDesktopFolderId
+$frameworkCommonDesktop = [Environment]::GetFolderPath(
+    [Environment+SpecialFolder]::CommonDesktopDirectory)
+if ([string]::IsNullOrWhiteSpace($frameworkCommonDesktop) -or
+    -not [string]::Equals(
+        [IO.Path]::GetFullPath($resolvedCommonDesktop).TrimEnd('\'),
+        [IO.Path]::GetFullPath($frameworkCommonDesktop).TrimEnd('\'),
+        [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'The native and framework Common Desktop resolvers disagree.'
 }
 
 foreach ($rights in @(
@@ -195,10 +211,19 @@ try {
                 [StringComparison]::OrdinalIgnoreCase)) {
             throw 'Trusted Common Programs validation changed the resolved path.'
         }
+        $trustedCommonDesktop = Get-MsiTrustedKnownFolderPath `
+            -FolderId $commonDesktopFolderId `
+            -Description 'test Common Desktop'
+        if (-not [string]::Equals(
+                [IO.Path]::GetFullPath($trustedCommonDesktop).TrimEnd('\'),
+                [IO.Path]::GetFullPath($resolvedCommonDesktop).TrimEnd('\'),
+                [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Trusted Common Desktop validation changed the resolved path.'
+        }
     }
 }
 finally {
     $identity.Dispose()
 }
 
-Write-Output 'Validated the machine-wide MSI Programs known-folder contract.'
+Write-Output 'Validated the machine-wide MSI Programs and Desktop known-folder contracts.'

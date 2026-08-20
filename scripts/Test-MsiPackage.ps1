@@ -233,15 +233,33 @@ function Assert-ExactMsiSequenceTable {
     foreach ($row in $rows) {
         $action = [string]$row[0]
         [int]$sequence = 0
+        $expectedAction = if ($ExpectedActions.ContainsKey($action)) {
+            $ExpectedActions[$action]
+        }
+        else {
+            $null
+        }
+        $expectedCondition = if ($expectedAction -is [hashtable]) {
+            [string]$expectedAction.Condition
+        }
+        else {
+            ''
+        }
+        $expectedSequence = if ($expectedAction -is [hashtable]) {
+            [int]$expectedAction.Sequence
+        }
+        else {
+            [int]$expectedAction
+        }
         if (-not $ExpectedActions.ContainsKey($action) -or
             -not $seenActions.Add($action) -or
-            -not [string]::IsNullOrEmpty([string]$row[1]) -or
+            [string]$row[1] -cne $expectedCondition -or
             -not [int]::TryParse(
                 [string]$row[2],
-                [Globalization.NumberStyles]::None,
+                [Globalization.NumberStyles]::AllowLeadingSign,
                 [Globalization.CultureInfo]::InvariantCulture,
                 [ref]$sequence) -or
-            $sequence -ne [int]$ExpectedActions[$action]) {
+            $sequence -ne $expectedSequence) {
             throw "MSI $TableName contains unexpected action, condition, or sequence metadata for '$action'."
         }
     }
@@ -940,6 +958,8 @@ $expectedSecurityComponentGuid = Get-DeterministicGuid `
     -Identity "Component|ApplicationDirectorySecurity|$ExpectedArchitecture"
 $expectedShortcutComponentGuid = Get-DeterministicGuid `
     -Identity "Component|StartMenuShortcut|$ExpectedArchitecture"
+$expectedDesktopShortcutComponentGuid = Get-DeterministicGuid `
+    -Identity "Component|DesktopShortcut|$ExpectedArchitecture"
 $expectedRuntimeHostComponentGuid = Get-DeterministicGuid `
     -Identity "Component|RuntimeHost|$ExpectedArchitecture"
 $expectedFileComponentGuidSeed = Get-DeterministicGuid `
@@ -962,6 +982,7 @@ if (-not [string]::IsNullOrWhiteSpace($ValidationMetadataPath)) {
         $validationMetadata.Flavor -cne $ExpectedFlavor -or
         $validationMetadata.SecurityComponentGuid -cne $expectedSecurityComponentGuid -or
         $validationMetadata.ShortcutComponentGuid -cne $expectedShortcutComponentGuid -or
+        $validationMetadata.DesktopShortcutComponentGuid -cne $expectedDesktopShortcutComponentGuid -or
         $validationMetadata.RuntimeHostComponentGuid -cne $expectedRuntimeHostComponentGuid -or
         $validationMetadata.FileComponentGuidSeed -cne $expectedFileComponentGuidSeed) {
         throw 'Validation metadata does not match the requested MSI identity.'
@@ -1041,12 +1062,15 @@ try {
         ARPPRODUCTICON = 'WireSockUI.ico'
         Manufacturer = 'WireSock Foundation'
         ProductCode = $ExpectedProductCode
-        ProductLanguage = '0'
+        ProductLanguage = '1033'
         ProductName = 'WireSock UI'
         ProductVersion = $ExpectedVersion
         UpgradeCode = $expectedUpgradeCode
+        DefaultUIFont = 'WixUI_Font_Normal'
+        ErrorDialog = 'ErrorDlg'
+        WixUIRMOption = 'UseRM'
         SecureCustomProperties =
-            'NETFRAMEWORK472RELEASE;WINDOWSCURRENTBUILD;WIX_DOWNGRADE_DETECTED;WIX_UPGRADE_DETECTED'
+            'BURNMSIMODIFY;BURNMSIREPAIR;BURNMSIUNINSTALL;NETFRAMEWORK472RELEASE;WINDOWSCURRENTBUILD;WIX_DOWNGRADE_DETECTED;WIX_UPGRADE_DETECTED'
     }
     $propertyRows = @(Get-MsiRows -Sql 'SELECT * FROM `Property`')
     $seenProperties = New-Object 'System.Collections.Generic.HashSet[string]' (
@@ -1075,7 +1099,7 @@ try {
             'x64' { 'x64' }
             'arm64' { 'Arm64' }
         }
-        if ($template -cne ($expectedTemplateArchitecture + ';0')) {
+        if ($template -cne ($expectedTemplateArchitecture + ';1033')) {
             throw "MSI summary template '$template' does not target $ExpectedArchitecture."
         }
         $summaryCodePage = [int](Get-ComProperty `
@@ -1135,7 +1159,7 @@ try {
         [string]$_[1] -eq '' -and
         [string]$_[2] -ceq $ExpectedVersion -and
         [string]$_[3] -eq '' -and
-        [int]$_[4] -eq 512 -and
+        [int]$_[4] -eq 513 -and
         [string]$_[5] -eq '' -and
         [string]$_[6] -ceq 'WIX_UPGRADE_DETECTED'
     })
@@ -1302,6 +1326,9 @@ try {
         FileCost = 900
         CostFinalize = 1000
         ExecuteAction = 1300
+        ExitDialog = -1
+        FatalError = -3
+        UserExit = -2
     }
     Assert-ExactMsiSequenceTable -TableName 'AdvtExecuteSequence' -ExpectedActions @{
         CostInitialize = 800
@@ -1319,9 +1346,27 @@ try {
         FileCost = 900
         CostFinalize = 1000
         ExecuteAction = 1300
+        ExitDialog = -1
+        FatalError = -3
         FindRelatedProducts = 25
         LaunchConditions = 100
+        MaintenanceWelcomeDlg = @{
+            Sequence = 1298
+            Condition = 'Installed AND NOT RESUME AND NOT Preselected AND NOT PATCH'
+        }
+        MigrateFeatureStates = 1200
+        PrepareDlg = 49
+        ProgressDlg = 1299
+        ResumeDlg = @{
+            Sequence = 1296
+            Condition = 'Installed AND (RESUME OR Preselected)'
+        }
+        UserExit = -2
         ValidateProductID = 700
+        WelcomeDlg = @{
+            Sequence = 1297
+            Condition = 'NOT Installed OR PATCH'
+        }
     }
     Assert-ExactMsiSequenceTable -TableName 'InstallExecuteSequence' -ExpectedActions @{
         AppSearch = 50
@@ -1337,6 +1382,7 @@ try {
         PublishProduct = 6400
         FindRelatedProducts = 25
         LaunchConditions = 100
+        MigrateFeatureStates = 1200
         ValidateProductID = 700
         ProcessComponents = 1600
         UnpublishFeatures = 1800
@@ -1373,9 +1419,16 @@ try {
         'AdminUISequence',
         'AdvtExecuteSequence',
         'AppSearch',
+        'Binary',
+        'CheckBox',
         'Component',
+        'Control',
+        'ControlCondition',
+        'ControlEvent',
         'CreateFolder',
         'Directory',
+        'Dialog',
+        'EventMapping',
         'Feature',
         'FeatureComponents',
         'File',
@@ -1383,13 +1436,17 @@ try {
         'InstallExecuteSequence',
         'InstallUISequence',
         'LaunchCondition',
+        'ListBox',
         'Media',
         'MsiLockPermissionsEx',
         'Property',
         'Registry',
         'RegLocator',
+        'RadioButton',
         'Shortcut',
         'Signature',
+        'TextStyle',
+        'UIText',
         'Upgrade'
     )
     $actualTableNames = @($tableRows | ForEach-Object { [string]$_[0] })
@@ -1405,6 +1462,28 @@ try {
         $missingTableNames.Count -ne 0 -or
         $unexpectedTableNames.Count -ne 0) {
         throw "MSI table inventory differs from the closed-world allowlist. Missing: $($missingTableNames -join ', '); unexpected: $($unexpectedTableNames -join ', ')."
+    }
+
+    $expectedUiBinaryNames = @(
+        'WixUI_Bmp_Banner',
+        'WixUI_Bmp_Dialog',
+        'WixUI_Bmp_New',
+        'WixUI_Bmp_Up',
+        'WixUI_Ico_Exclam',
+        'WixUI_Ico_Info'
+    )
+    $uiBinaryNames = @(
+        Get-MsiRows -Sql 'SELECT `Name` FROM `Binary`' |
+            ForEach-Object { [string]$_[0] } |
+            Sort-Object
+    )
+    if (@(
+            Compare-Object `
+                -ReferenceObject $expectedUiBinaryNames `
+                -DifferenceObject $uiBinaryNames `
+                -CaseSensitive
+        ).Count -ne 0) {
+        throw 'MSI Binary table differs from the exact pinned WixUI image resources.'
     }
 
     $createFolderRows = @(Get-MsiRows -Sql 'SELECT * FROM `CreateFolder`')
@@ -1514,17 +1593,38 @@ try {
     # Schema order begins Shortcut, Directory_, Name, Component_, Target,
     # Arguments, Description, Hotkey, Icon_, IconIndex, ShowCmd, WkDir.
     $shortcutRows = @(Get-MsiRows -Sql 'SELECT * FROM `Shortcut`')
-    if ($shortcutRows.Count -ne 1 -or
-        [string]$shortcutRows[0][0] -cne 'WireSockStartMenuShortcut' -or
-        [string]$shortcutRows[0][1] -cne 'ProgramMenuFolder' -or
-        (Get-LongMsiName -Value ([string]$shortcutRows[0][2])) -cne 'WireSock UI' -or
-        [string]$shortcutRows[0][3] -cne 'StartMenuShortcutComponent' -or
-        [string]$shortcutRows[0][4] -cne '[WireSockInstallFolder]WireSockUI.exe' -or
-        -not [string]::IsNullOrEmpty([string]$shortcutRows[0][5]) -or
-        [string]$shortcutRows[0][8] -cne 'WireSockUI.ico' -or
-        [int]$shortcutRows[0][9] -ne 0 -or
-        -not [string]::IsNullOrEmpty([string]$shortcutRows[0][10]) -or
-        [string]$shortcutRows[0][11] -cne 'WireSockInstallFolder') {
+    $expectedShortcuts = @{
+        WireSockStartMenuShortcut = @{
+            Directory = 'ProgramMenuFolder'
+            Component = 'StartMenuShortcutComponent'
+        }
+        WireSockDesktopShortcut = @{
+            Directory = 'DesktopFolder'
+            Component = 'DesktopShortcutComponent'
+        }
+    }
+    $seenShortcuts = New-Object 'System.Collections.Generic.HashSet[string]' (
+        [StringComparer]::Ordinal)
+    foreach ($shortcutRow in $shortcutRows) {
+        $shortcutId = [string]$shortcutRow[0]
+        if (-not $expectedShortcuts.ContainsKey($shortcutId) -or
+            -not $seenShortcuts.Add($shortcutId) -or
+            [string]$shortcutRow[1] -cne
+                [string]$expectedShortcuts[$shortcutId].Directory -or
+            (Get-LongMsiName -Value ([string]$shortcutRow[2])) -cne 'WireSock UI' -or
+            [string]$shortcutRow[3] -cne
+                [string]$expectedShortcuts[$shortcutId].Component -or
+            [string]$shortcutRow[4] -cne '[WireSockInstallFolder]WireSockUI.exe' -or
+            -not [string]::IsNullOrEmpty([string]$shortcutRow[5]) -or
+            [string]$shortcutRow[8] -cne 'WireSockUI.ico' -or
+            [int]$shortcutRow[9] -ne 0 -or
+            -not [string]::IsNullOrEmpty([string]$shortcutRow[10]) -or
+            [string]$shortcutRow[11] -cne 'WireSockInstallFolder') {
+            throw "MSI shortcut '$shortcutId' differs from its exact non-advertised shell shortcut invariant."
+        }
+    }
+    if ($shortcutRows.Count -ne $expectedShortcuts.Count -or
+        $seenShortcuts.Count -ne $expectedShortcuts.Count) {
         $shortcutDescription = (
             $shortcutRows |
                 ForEach-Object {
@@ -1532,19 +1632,34 @@ try {
                     (0..($row.Count - 1) | ForEach-Object { "[$_]='$($row[$_])'" }) -join ', '
                 }
         ) -join '; '
-        throw "MSI does not contain exactly one stable non-advertised WireSock UI Start Menu shortcut: $shortcutDescription"
+        throw "MSI does not contain exactly the Start menu and desktop WireSock UI shortcuts: $shortcutDescription"
     }
 
     # Schema order: Registry, Root, Key, Name, Value, Component_.
     $registryRows = @(Get-MsiRows -Sql 'SELECT * FROM `Registry`')
-    if ($registryRows.Count -ne 1 -or
-        [string]$registryRows[0][0] -cnotmatch '^[A-Za-z_][A-Za-z0-9_.]{0,71}$' -or
-        [int]$registryRows[0][1] -ne 2 -or
-        [string]$registryRows[0][2] -cne 'Software\WireSock Foundation\WireSock UI' -or
-        [string]$registryRows[0][3] -cne 'StartMenuShortcut' -or
-        [string]$registryRows[0][4] -cne '#1' -or
-        [string]$registryRows[0][5] -cne 'StartMenuShortcutComponent') {
-        throw 'MSI Registry table differs from the one expected shortcut key-path value.'
+    $expectedRegistryValueByComponent = @{
+        StartMenuShortcutComponent = 'StartMenuShortcut'
+        DesktopShortcutComponent = 'DesktopShortcut'
+    }
+    $registryKeyPathByComponent = @{}
+    foreach ($registryRow in $registryRows) {
+        $componentId = [string]$registryRow[5]
+        if (-not $expectedRegistryValueByComponent.ContainsKey($componentId) -or
+            $registryKeyPathByComponent.ContainsKey($componentId) -or
+            [string]$registryRow[0] -cnotmatch '^[A-Za-z_][A-Za-z0-9_.]{0,71}$' -or
+            [int]$registryRow[1] -ne 2 -or
+            [string]$registryRow[2] -cne 'Software\WireSock Foundation\WireSock UI' -or
+            [string]$registryRow[3] -cne
+                [string]$expectedRegistryValueByComponent[$componentId] -or
+            [string]$registryRow[4] -cne '#1') {
+            throw "MSI shortcut registry key path for '$componentId' differs from its exact invariant."
+        }
+        $registryKeyPathByComponent[$componentId] = [string]$registryRow[0]
+    }
+    if ($registryRows.Count -ne $expectedRegistryValueByComponent.Count -or
+        $registryKeyPathByComponent.Count -ne
+            $expectedRegistryValueByComponent.Count) {
+        throw 'MSI Registry table differs from the two expected shortcut key-path values.'
     }
 
     $iconRows = @(Get-MsiRows -Sql 'SELECT `Name` FROM `Icon`')
@@ -1572,7 +1687,9 @@ try {
         }
     }
     if ($componentIdentity['ApplicationDirectorySecurity'] -cne $expectedSecurityComponentGuid -or
-        $componentIdentity['StartMenuShortcutComponent'] -cne $expectedShortcutComponentGuid) {
+        $componentIdentity['StartMenuShortcutComponent'] -cne $expectedShortcutComponentGuid -or
+        $componentIdentity['DesktopShortcutComponent'] -cne
+            $expectedDesktopShortcutComponentGuid) {
         throw 'Installer-owned directory and shortcut component GUIDs are not architecture-specific deterministic values.'
     }
 
@@ -1874,6 +1991,7 @@ try {
             $payloadComponentIds.Contains($directoryComponentId) -or
             $directoryComponentId -in @(
                 'ApplicationDirectorySecurity',
+                'DesktopShortcutComponent',
                 'StartMenuShortcutComponent')) {
             throw 'A payload-directory security component is duplicated or owns unrelated resources.'
         }
@@ -1886,7 +2004,7 @@ try {
     if ($completeComponentRows.Count -ne
         $payloadComponentIds.Count +
             $directorySecurityDirectoryByComponent.Count +
-            2) {
+            3) {
         throw 'MSI Component table does not contain the exact payload-file, payload-directory, and installer-owned component inventory.'
     }
     $seenComponentGuids = New-Object 'System.Collections.Generic.HashSet[string]' (
@@ -1924,8 +2042,19 @@ try {
             if ($componentGuid -cne $expectedShortcutComponentGuid -or
                 $componentDirectoryId -cne 'ProgramMenuFolder' -or
                 $componentAttributes -ne ($expectedComponentAttributes -bor 4) -or
-                $componentKeyPath -cne [string]$registryRows[0][0]) {
+                $componentKeyPath -cne
+                    [string]$registryKeyPathByComponent[$componentId]) {
                 throw 'The Start Menu shortcut component differs from its exact invariant.'
+            }
+            continue
+        }
+        if ($componentId -ceq 'DesktopShortcutComponent') {
+            if ($componentGuid -cne $expectedDesktopShortcutComponentGuid -or
+                $componentDirectoryId -cne 'DesktopFolder' -or
+                $componentAttributes -ne ($expectedComponentAttributes -bor 4) -or
+                $componentKeyPath -cne
+                    [string]$registryKeyPathByComponent[$componentId]) {
+                throw 'The desktop shortcut component differs from its exact invariant.'
             }
             continue
         }
@@ -2007,29 +2136,82 @@ try {
     }
 
     $featureRows = @(Get-MsiRows -Sql 'SELECT * FROM `Feature`')
-    if ($featureRows.Count -ne 1 -or
-        [string]$featureRows[0][0] -cne 'WixDefaultFeature' -or
-        -not [string]::IsNullOrEmpty([string]$featureRows[0][1]) -or
-        -not [string]::IsNullOrEmpty([string]$featureRows[0][2]) -or
-        -not [string]::IsNullOrEmpty([string]$featureRows[0][3]) -or
-        [int]$featureRows[0][4] -ne 0 -or
-        [int]$featureRows[0][5] -ne 1 -or
-        -not [string]::IsNullOrEmpty([string]$featureRows[0][6]) -or
-        [int]$featureRows[0][7] -ne 0) {
-        throw 'MSI Feature table differs from the one exact always-installed feature.'
+    $expectedFeatures = @{
+        CoreFeature = @{
+            Parent = ''
+            Title = 'WireSock UI'
+            Description = 'WireSock UI application files'
+            Display = 1
+            Level = 1
+            Attributes = 24
+        }
+        StartMenuShortcutFeature = @{
+            Parent = 'CoreFeature'
+            Title = 'Start menu shortcut'
+            Description = 'Add WireSock UI to the Start menu'
+            Display = 2
+            Level = 1
+            Attributes = 8
+        }
+        DesktopShortcutFeature = @{
+            Parent = 'CoreFeature'
+            Title = 'Desktop shortcut'
+            Description = 'Create a WireSock UI shortcut on the desktop'
+            Display = 4
+            Level = 1
+            Attributes = 8
+        }
+    }
+    $seenFeatures = New-Object 'System.Collections.Generic.HashSet[string]' (
+        [StringComparer]::Ordinal)
+    foreach ($featureRow in $featureRows) {
+        $featureId = [string]$featureRow[0]
+        if (-not $expectedFeatures.ContainsKey($featureId) -or
+            -not $seenFeatures.Add($featureId) -or
+            [string]$featureRow[1] -cne
+                [string]$expectedFeatures[$featureId].Parent -or
+            [string]$featureRow[2] -cne
+                [string]$expectedFeatures[$featureId].Title -or
+            [string]$featureRow[3] -cne
+                [string]$expectedFeatures[$featureId].Description -or
+            [int]$featureRow[4] -ne
+                [int]$expectedFeatures[$featureId].Display -or
+            [int]$featureRow[5] -ne
+                [int]$expectedFeatures[$featureId].Level -or
+            -not [string]::IsNullOrEmpty([string]$featureRow[6]) -or
+            [int]$featureRow[7] -ne
+                [int]$expectedFeatures[$featureId].Attributes) {
+            throw "MSI feature '$featureId' differs from its exact selectable-shortcut invariant."
+        }
+    }
+    if ($featureRows.Count -ne $expectedFeatures.Count -or
+        $seenFeatures.Count -ne $expectedFeatures.Count) {
+        throw 'MSI Feature table differs from the mandatory application and two optional shortcut features.'
     }
     $featureComponentRows = @(Get-MsiRows -Sql 'SELECT * FROM `FeatureComponents`')
     $seenFeatureComponents = New-Object 'System.Collections.Generic.HashSet[string]' (
         [StringComparer]::Ordinal)
     foreach ($featureComponentRow in $featureComponentRows) {
-        if ([string]$featureComponentRow[0] -cne 'WixDefaultFeature' -or
-            -not $componentIds.Contains([string]$featureComponentRow[1]) -or
-            -not $seenFeatureComponents.Add([string]$featureComponentRow[1])) {
+        $featureId = [string]$featureComponentRow[0]
+        $componentId = [string]$featureComponentRow[1]
+        $expectedFeatureId = if ($componentId -ceq
+            'StartMenuShortcutComponent') {
+            'StartMenuShortcutFeature'
+        }
+        elseif ($componentId -ceq 'DesktopShortcutComponent') {
+            'DesktopShortcutFeature'
+        }
+        else {
+            'CoreFeature'
+        }
+        if ($featureId -cne $expectedFeatureId -or
+            -not $componentIds.Contains($componentId) -or
+            -not $seenFeatureComponents.Add($componentId)) {
             throw 'MSI FeatureComponents contains an unknown, duplicate, or incorrectly assigned component.'
         }
     }
     if ($seenFeatureComponents.Count -ne $componentIds.Count) {
-        throw 'The default MSI feature does not reference every component exactly once.'
+        throw 'The MSI features do not reference every component exactly once.'
     }
 
     if ($metadataFiles.Count -gt 0 -and $fileTableTotalBytes -ne $metadataTotalBytes) {

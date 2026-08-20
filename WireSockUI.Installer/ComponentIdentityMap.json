@@ -9,6 +9,12 @@
     },
     {
       "Architecture": "arm64",
+      "Resource": "component:DesktopShortcutComponent",
+      "Guid": "{FDEE3821-19F5-5EB5-BB5C-88FE2007425E}",
+      "State": "active"
+    },
+    {
+      "Architecture": "arm64",
       "Resource": "component:StartMenuShortcutComponent",
       "Guid": "{272197E4-0E49-52BD-9BA8-EC476FE43A4D}",
       "State": "active"
@@ -345,6 +351,12 @@
     },
     {
       "Architecture": "x64",
+      "Resource": "component:DesktopShortcutComponent",
+      "Guid": "{F7CB31FD-E0FF-54B8-939B-2D2799D54FFE}",
+      "State": "active"
+    },
+    {
+      "Architecture": "x64",
       "Resource": "component:StartMenuShortcutComponent",
       "Guid": "{C92A8606-F0ED-5516-9E4E-0262273EAEF3}",
       "State": "active"
@@ -677,6 +689,12 @@
       "Architecture": "x86",
       "Resource": "component:ApplicationDirectorySecurity",
       "Guid": "{18F1AF0C-39C1-530F-9BE2-1CFD4C1B1523}",
+      "State": "active"
+    },
+    {
+      "Architecture": "x86",
+      "Resource": "component:DesktopShortcutComponent",
+      "Guid": "{B587763B-9A27-5AB6-B203-2638DB25DFC8}",
       "State": "active"
     },
     {

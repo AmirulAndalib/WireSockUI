@@ -721,6 +721,15 @@ namespace WireSockUI.Properties {
         }
 
         /// <summary>
+        ///   Looks up a localized string similar to Select or add a tunnel to view its details..
+        /// </summary>
+        internal static string ProfileSelectionPrompt {
+            get {
+                return ResourceManager.GetString("ProfileSelectionPrompt", resourceCulture);
+            }
+        }
+
+        /// <summary>
         ///   Looks up a localized string similar to Do you want to continue?.
         /// </summary>
         internal static string ProfileScriptWarningContinue {

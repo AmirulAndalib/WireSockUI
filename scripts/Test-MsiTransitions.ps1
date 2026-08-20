@@ -344,8 +344,13 @@ $x86InstallRoot = [IO.Path]::GetFullPath(
 $commonPrograms = Get-MsiTrustedKnownFolderPath `
     -FolderId (Get-MsiCommonProgramsFolderId) `
     -Description 'all-users Programs'
-$shortcutPath = [IO.Path]::GetFullPath(
-    (Join-Path $commonPrograms 'WireSock UI.lnk'))
+$commonDesktop = Get-MsiTrustedKnownFolderPath `
+    -FolderId (Get-MsiCommonDesktopFolderId) `
+    -Description 'all-users Desktop'
+$shortcutPaths = @(
+    [IO.Path]::GetFullPath((Join-Path $commonPrograms 'WireSock UI.lnk')),
+    [IO.Path]::GetFullPath((Join-Path $commonDesktop 'WireSock UI.lnk'))
+)
 $windowsDirectory = Get-MsiTrustedKnownFolderPath `
     -FolderId ([Guid]'F38BF404-1D43-42F2-9305-67DE0B28FC23') `
     -Description 'Windows'
@@ -546,43 +551,44 @@ function Assert-InstalledImage {
 function Assert-ShortcutTarget {
     param([string]$ExpectedInstallRoot)
 
-    if (-not [IO.File]::Exists($shortcutPath)) {
-        throw "All-users shortcut '$shortcutPath' is missing."
-    }
-    # The disposable runner grants its interactive account inherited
-    # delete-only access under Common Programs. The validated parent denies
-    # untrusted creation, so that ACE cannot replace the shortcut.
-    Assert-ProtectedEntry -Path $shortcutPath -AllowDeleteOnly
-    $shell = $null
-    $shortcut = $null
-    try {
-        $shell = New-Object -ComObject WScript.Shell
-        $shortcut = $shell.CreateShortcut($shortcutPath)
-        $expectedTarget = [IO.Path]::GetFullPath(
-            (Join-Path $ExpectedInstallRoot 'WireSockUI.exe'))
-        $actualTarget = [IO.Path]::GetFullPath([string]$shortcut.TargetPath)
-        $actualWorkingDirectory = [IO.Path]::GetFullPath(
-            [string]$shortcut.WorkingDirectory)
-        if (-not [string]::Equals(
-                $actualTarget,
-                $expectedTarget,
-                [StringComparison]::OrdinalIgnoreCase) -or
-            -not [string]::Equals(
-                $actualWorkingDirectory.TrimEnd('\'),
-                $ExpectedInstallRoot.TrimEnd('\'),
-                [StringComparison]::OrdinalIgnoreCase) -or
-            -not [string]::IsNullOrEmpty([string]$shortcut.Arguments)) {
-            throw "All-users shortcut does not target '$expectedTarget' exactly."
+    foreach ($shortcutPath in $shortcutPaths) {
+        if (-not [IO.File]::Exists($shortcutPath)) {
+            throw "All-users shortcut '$shortcutPath' is missing."
         }
-    }
-    finally {
-        if ($null -ne $shortcut) {
-            [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut) |
-                Out-Null
+        # The validated parent denies untrusted creation, so inherited
+        # delete-only access cannot be used to replace the shortcut.
+        Assert-ProtectedEntry -Path $shortcutPath -AllowDeleteOnly
+        $shell = $null
+        $shortcut = $null
+        try {
+            $shell = New-Object -ComObject WScript.Shell
+            $shortcut = $shell.CreateShortcut($shortcutPath)
+            $expectedTarget = [IO.Path]::GetFullPath(
+                (Join-Path $ExpectedInstallRoot 'WireSockUI.exe'))
+            $actualTarget = [IO.Path]::GetFullPath([string]$shortcut.TargetPath)
+            $actualWorkingDirectory = [IO.Path]::GetFullPath(
+                [string]$shortcut.WorkingDirectory)
+            if (-not [string]::Equals(
+                    $actualTarget,
+                    $expectedTarget,
+                    [StringComparison]::OrdinalIgnoreCase) -or
+                -not [string]::Equals(
+                    $actualWorkingDirectory.TrimEnd('\'),
+                    $ExpectedInstallRoot.TrimEnd('\'),
+                    [StringComparison]::OrdinalIgnoreCase) -or
+                -not [string]::IsNullOrEmpty([string]$shortcut.Arguments)) {
+                throw "All-users shortcut '$shortcutPath' does not target '$expectedTarget' exactly."
+            }
         }
-        if ($null -ne $shell) {
-            [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) |
-                Out-Null
+        finally {
+            if ($null -ne $shortcut) {
+                [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut) |
+                    Out-Null
+            }
+            if ($null -ne $shell) {
+                [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) |
+                    Out-Null
+            }
         }
     }
 }
@@ -989,8 +995,10 @@ foreach ($root in @($x64InstallRoot, $x86InstallRoot)) {
         throw "The ephemeral machine is not clean: '$root' already exists."
     }
 }
-if (Test-FileSystemEntryExists -Path $shortcutPath) {
-    throw "The ephemeral machine is not clean: '$shortcutPath' already exists."
+if (@($shortcutPaths | Where-Object {
+            Test-FileSystemEntryExists -Path $_
+        }).Count -ne 0) {
+    throw 'The ephemeral machine is not clean: a WireSock UI shortcut already exists.'
 }
 Assert-RelatedProducts -ExpectedProductCodes @()
 foreach ($package in $packages) {
@@ -1141,8 +1149,10 @@ try {
     Assert-UnknownMarker `
         -Path $unknownMarkerPath `
         -ExpectedHash $unknownMarkerHash
-    if (Test-FileSystemEntryExists -Path $shortcutPath) {
-        throw 'All-users shortcut remained after flavor-transition uninstall.'
+    if (@($shortcutPaths | Where-Object {
+                Test-FileSystemEntryExists -Path $_
+            }).Count -ne 0) {
+        throw 'An all-users shortcut remained after flavor-transition uninstall.'
     }
     $remainingFiles = @(
         Get-ChildItem -LiteralPath $x64InstallRoot -Recurse -File -Force
@@ -1184,7 +1194,9 @@ try {
     Assert-RelatedProducts -ExpectedProductCodes @()
     if ((Test-FileSystemEntryExists -Path $x64InstallRoot) -or
         (Test-FileSystemEntryExists -Path $x86InstallRoot) -or
-        (Test-FileSystemEntryExists -Path $shortcutPath)) {
+        @($shortcutPaths | Where-Object {
+                Test-FileSystemEntryExists -Path $_
+            }).Count -ne 0) {
         throw 'Cross-architecture scenario did not clean all MSI-owned state.'
     }
 }
@@ -1252,8 +1264,10 @@ finally {
             foreach ($package in $packages) {
                 Assert-ProductAbsent -Package $package
             }
-            if (Test-FileSystemEntryExists -Path $shortcutPath) {
-                throw "All-users shortcut '$shortcutPath' remained after cleanup."
+            if (@($shortcutPaths | Where-Object {
+                        Test-FileSystemEntryExists -Path $_
+                    }).Count -ne 0) {
+                throw 'An all-users WireSock UI shortcut remained after cleanup.'
             }
         }
         catch {

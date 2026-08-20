@@ -38,6 +38,7 @@ namespace WireSockUI.Forms
         private const int MaxTrayProfileItems = 50;
         private const int MaxLegacyProfilesReviewedPerLaunch = 20;
         private const int LogUiBatchSize = 256;
+        private const float ProfileActionsRowHeight = 40F;
         private const int ShutdownDisconnectTimeoutMilliseconds = 5000;
         private const int ShutdownSettingsTimeoutMilliseconds = 5000;
         private const int UiDispatchStartTimeoutMilliseconds = 5000;
@@ -70,6 +71,7 @@ namespace WireSockUI.Forms
         private Icon _ownedTrayIcon;
         private Image _inactiveStatusImage;
         private Image _connectedStatusImage;
+        private Label _profileSelectionPrompt;
         private string _activeTunnelAddresses;
 
         /**
@@ -140,6 +142,19 @@ namespace WireSockUI.Forms
             ConfigureDetailsGroup(gbxPeer, layoutPeer, 120F);
             ConfigureDetailsGroup(gbxState, layoutState, 120F);
             layoutState.SizeChanged += OnLayoutPanelResize;
+
+            _profileSelectionPrompt = new Label
+            {
+                BackColor = SystemColors.Window,
+                Dock = DockStyle.Fill,
+                ForeColor = SystemColors.GrayText,
+                Padding = new Padding(24),
+                Text = Resources.ProfileSelectionPrompt,
+                TextAlign = ContentAlignment.MiddleCenter
+            };
+            pnlRight.Controls.Add(_profileSelectionPrompt);
+            _profileSelectionPrompt.BringToFront();
+            SetProfileDetailsAvailable(false);
 
             lstLog.BorderStyle = BorderStyle.FixedSingle;
             lstLog.Font = SystemFonts.MessageBoxFont;
@@ -3141,6 +3156,16 @@ namespace WireSockUI.Forms
             gbxState.Visible = false;
             ClearDynamicLayout(layoutState);
             layoutState.RowStyles.Clear();
+
+            SetProfileDetailsAvailable(false);
+        }
+
+        private void SetProfileDetailsAvailable(bool available)
+        {
+            _profileSelectionPrompt.Visible = !available;
+            pnlProfileActions.Visible = available;
+            if (layoutDetails.RowStyles.Count > 1)
+                layoutDetails.RowStyles[1].Height = available ? ProfileActionsRowHeight : 0F;
         }
 
         private void OnProfileChange(object sender, ListViewItemSelectionChangedEventArgs e)
@@ -3167,15 +3192,15 @@ namespace WireSockUI.Forms
                         ProfileDisplayFormatter.FormatText(profile.Address));
 
                     layoutInterface.RowStyles.Add(new RowStyle(SizeType.Absolute, 10));
-                    layoutInterface.RowStyles.Add(new RowStyle(SizeType.Absolute, 35));
+                    layoutInterface.RowStyles.Add(new RowStyle(SizeType.AutoSize));
                     layoutInterface.RowCount = layoutInterface.RowStyles.Count;
 
                     var btnActivate = new Button
                     {
                         AutoSize = true,
                         AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                        Dock = DockStyle.Left,
-                        Margin = new Padding(0, 6, 0, 2),
+                        Anchor = AnchorStyles.Left,
+                        Margin = new Padding(0, 2, 0, 2),
                         Name = "btnActivate",
                         Padding = new Padding(10, 3, 10, 3),
                         Text = Resources.ButtonInactive
@@ -3186,7 +3211,6 @@ namespace WireSockUI.Forms
                     layoutInterface.Controls.Add(btnActivate, 1, layoutInterface.RowCount - 1);
                     SetActivateButtonEnabled(true);
 
-                    layoutInterface.RowStyles.Add(new RowStyle(SizeType.AutoSize));
                     gbxInterface.Visible = true;
 
                     OnLayoutPanelResize(layoutInterface, EventArgs.Empty);
@@ -3243,6 +3267,8 @@ namespace WireSockUI.Forms
                     // Selection changes repaint profile details without restarting global tunnel monitoring.
                     if (_tunnelLifecycle != null && _currentState != ConnectionState.Disconnected)
                         UpdateSelectedProfileState(_currentState, _tunnelLifecycle.ProfileName);
+
+                    SetProfileDetailsAvailable(true);
                 }
                 catch (Exception ex)
                 {

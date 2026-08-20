@@ -124,6 +124,11 @@ function Get-MsiCommonProgramsFolderId {
     return [Guid]'0139D44E-6AFE-49F2-8690-3DAFCAE6FFB8'
 }
 
+function Get-MsiCommonDesktopFolderId {
+    # FOLDERID_PublicDesktop is the machine-wide desktop folder.
+    return [Guid]'C4AA340D-F20F-4863-AFEF-F87EF2E6BA25'
+}
+
 function Get-MsiKnownFolderPath {
     param([Parameter(Mandatory = $true)][Guid]$FolderId)
 
@@ -374,6 +379,7 @@ function Get-MsiTrustedKnownFolderPath {
 
 Export-ModuleMember -Function @(
     'Assert-MsiTrustedDirectoryPath',
+    'Get-MsiCommonDesktopFolderId',
     'Get-MsiCommonProgramsFolderId',
     'Get-MsiKnownFolderPath',
     'Get-MsiTrustedKnownFolderPath'

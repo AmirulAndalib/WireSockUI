@@ -216,6 +216,7 @@ function Get-PayloadAuthoring {
         $lines.Add('  <Component')
         $lines.Add("      Id=`"$componentId`"")
         $lines.Add("      Guid=`"$componentGuid`"")
+        $lines.Add('      Feature="CoreFeature"')
         $lines.Add('      Directory="WireSockInstallFolder"')
         $lines.Add("      Subdirectory=`"$subdirectory`">")
         $lines.Add('    <CreateFolder>')
@@ -240,6 +241,7 @@ function Get-PayloadAuthoring {
         $lines.Add('  <Component')
         $lines.Add("      Id=`"$componentId`"")
         $lines.Add('      Guid="*"')
+        $lines.Add('      Feature="CoreFeature"')
         if (-not [string]::IsNullOrEmpty($directoryPath)) {
             $lines.Add('      Directory="WireSockInstallFolder"')
             $subdirectory = ConvertTo-WixAttributeValue -Value $directoryPath
@@ -800,6 +802,8 @@ $securityComponentGuid = Get-DeterministicGuid `
     -Identity "Component|ApplicationDirectorySecurity|$normalizedArchitecture"
 $shortcutComponentGuid = Get-DeterministicGuid `
     -Identity "Component|StartMenuShortcut|$normalizedArchitecture"
+$desktopShortcutComponentGuid = Get-DeterministicGuid `
+    -Identity "Component|DesktopShortcut|$normalizedArchitecture"
 $runtimeHostComponentGuid = Get-DeterministicGuid `
     -Identity "Component|RuntimeHost|$normalizedArchitecture"
 $fileComponentGuidSeed = Get-DeterministicGuid `
@@ -848,6 +852,7 @@ try {
         "--property:ProductArchitecture=$normalizedArchitecture",
         "--property:SecurityComponentGuid=$securityComponentGuid",
         "--property:ShortcutComponentGuid=$shortcutComponentGuid",
+        "--property:DesktopShortcutComponentGuid=$desktopShortcutComponentGuid",
         "--property:RuntimeHostComponentGuid=$runtimeHostComponentGuid",
         "--property:FileComponentGuidSeed=$fileComponentGuidSeed",
         '--property:RuntimePayloadValidated=true',
@@ -879,6 +884,7 @@ try {
         UpgradeCode = '{5C1DDAE5-6681-41BF-B153-AB2952AA6DF1}'
         SecurityComponentGuid = $securityComponentGuid
         ShortcutComponentGuid = $shortcutComponentGuid
+        DesktopShortcutComponentGuid = $desktopShortcutComponentGuid
         RuntimeHostComponentGuid = $runtimeHostComponentGuid
         FileComponentGuidSeed = $fileComponentGuidSeed
         Architecture = $normalizedArchitecture

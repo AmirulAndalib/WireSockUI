@@ -328,7 +328,13 @@ $legacyInstallRoot = Join-Path $programFilesRoot 'WireSock UI'
 $commonPrograms = Get-MsiTrustedKnownFolderPath `
     -FolderId (Get-MsiCommonProgramsFolderId) `
     -Description 'all-users Programs'
-$shortcutPath = Join-Path $commonPrograms 'WireSock UI.lnk'
+$commonDesktop = Get-MsiTrustedKnownFolderPath `
+    -FolderId (Get-MsiCommonDesktopFolderId) `
+    -Description 'all-users Desktop'
+$shortcutPaths = @(
+    (Join-Path $commonPrograms 'WireSock UI.lnk'),
+    (Join-Path $commonDesktop 'WireSock UI.lnk')
+)
 $windowsDirectory = Get-MsiTrustedKnownFolderPath `
     -FolderId ([Guid]'F38BF404-1D43-42F2-9305-67DE0B28FC23') `
     -Description 'Windows'
@@ -346,7 +352,9 @@ if (($msiExecEntry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
 
 if ((Test-FileSystemEntryExists -Path $installRoot) -or
     (Test-FileSystemEntryExists -Path $legacyInstallRoot) -or
-    (Test-FileSystemEntryExists -Path $shortcutPath)) {
+    @($shortcutPaths | Where-Object {
+            Test-FileSystemEntryExists -Path $_
+        }).Count -ne 0) {
     throw 'The ephemeral machine is not clean: an installer destination, legacy path, or WireSock UI shortcut already exists.'
 }
 
@@ -778,42 +786,43 @@ try {
         }
     }
 
-    if (-not [IO.File]::Exists($shortcutPath)) {
-        throw "All-users shortcut '$shortcutPath' was not installed."
-    }
-    # The disposable runner grants its interactive account inherited
-    # delete-only access under Common Programs. The validated parent denies
-    # untrusted creation, so that ACE cannot replace the shortcut.
-    Assert-ProtectedEntry -Path $shortcutPath -AllowDeleteOnly
-    $shell = $null
-    $shortcut = $null
-    try {
-        $shell = New-Object -ComObject WScript.Shell
-        $shortcut = $shell.CreateShortcut($shortcutPath)
-        $actualTarget = [IO.Path]::GetFullPath(
-            [string]$shortcut.TargetPath)
-        $expectedTarget = [IO.Path]::GetFullPath(
-            (Join-Path $installRoot 'WireSockUI.exe'))
-        $actualWorkingDirectory = [IO.Path]::GetFullPath(
-            [string]$shortcut.WorkingDirectory)
-        if (-not [string]::Equals(
-                $actualTarget,
-                $expectedTarget,
-                [StringComparison]::OrdinalIgnoreCase) -or
-            -not [string]::Equals(
-                $actualWorkingDirectory.TrimEnd('\'),
-                [IO.Path]::GetFullPath($installRoot).TrimEnd('\'),
-                [StringComparison]::OrdinalIgnoreCase) -or
-            -not [string]::IsNullOrEmpty([string]$shortcut.Arguments)) {
-            throw 'All-users shortcut does not target the stable native launcher exactly.'
+    foreach ($shortcutPath in $shortcutPaths) {
+        if (-not [IO.File]::Exists($shortcutPath)) {
+            throw "All-users shortcut '$shortcutPath' was not installed."
         }
-    }
-    finally {
-        if ($null -ne $shortcut) {
-            [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut) | Out-Null
+        # The validated parent denies untrusted creation, so inherited
+        # delete-only access cannot be used to replace the shortcut.
+        Assert-ProtectedEntry -Path $shortcutPath -AllowDeleteOnly
+        $shell = $null
+        $shortcut = $null
+        try {
+            $shell = New-Object -ComObject WScript.Shell
+            $shortcut = $shell.CreateShortcut($shortcutPath)
+            $actualTarget = [IO.Path]::GetFullPath(
+                [string]$shortcut.TargetPath)
+            $expectedTarget = [IO.Path]::GetFullPath(
+                (Join-Path $installRoot 'WireSockUI.exe'))
+            $actualWorkingDirectory = [IO.Path]::GetFullPath(
+                [string]$shortcut.WorkingDirectory)
+            if (-not [string]::Equals(
+                    $actualTarget,
+                    $expectedTarget,
+                    [StringComparison]::OrdinalIgnoreCase) -or
+                -not [string]::Equals(
+                    $actualWorkingDirectory.TrimEnd('\'),
+                    [IO.Path]::GetFullPath($installRoot).TrimEnd('\'),
+                    [StringComparison]::OrdinalIgnoreCase) -or
+                -not [string]::IsNullOrEmpty([string]$shortcut.Arguments)) {
+                throw "All-users shortcut '$shortcutPath' does not target the stable native launcher exactly."
+            }
         }
-        if ($null -ne $shell) {
-            [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) | Out-Null
+        finally {
+            if ($null -ne $shortcut) {
+                [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut) | Out-Null
+            }
+            if ($null -ne $shell) {
+                [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) | Out-Null
+            }
         }
     }
     Invoke-InstalledNativeHostSmoke -Phase 'Installed native-host smoke'
@@ -939,9 +948,11 @@ try {
             throw "Repaired file '$relativePath' does not match validation metadata."
         }
     }
-    if (-not [IO.File]::Exists($shortcutPath) -or
+    if (@($shortcutPaths | Where-Object {
+                -not [IO.File]::Exists($_)
+            }).Count -ne 0 -or
         (Get-FileHash -LiteralPath $sentinelPath -Algorithm SHA256).Hash -cne $sentinelHash) {
-        throw 'MSI repair removed the all-users shortcut or touched the hostile legacy-path sentinel.'
+        throw 'MSI repair removed an all-users shortcut or touched the hostile legacy-path sentinel.'
     }
     Invoke-InstalledNativeHostSmoke -Phase 'Repaired native-host smoke'
 }
@@ -1031,8 +1042,10 @@ if ($cleanupErrors.Count -gt 0) {
 if ((Get-ProductState -ProductCode $productCode) -ne -1 -or
     (Test-FileSystemEntryExists -Path $installRoot) -or
     (Test-FileSystemEntryExists -Path $legacyInstallRoot) -or
-    (Test-FileSystemEntryExists -Path $shortcutPath)) {
-    throw 'MSI-owned product state, application files, legacy test entry, or all-users shortcut remained after uninstall.'
+    @($shortcutPaths | Where-Object {
+            Test-FileSystemEntryExists -Path $_
+        }).Count -ne 0) {
+    throw 'MSI-owned product state, application files, legacy test entry, or all-users shortcuts remained after uninstall.'
 }
 
 Write-Output "Installed, security-validated, and uninstalled $resolvedMsiPath without touching the hostile legacy-path junction."
