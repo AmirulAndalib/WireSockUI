@@ -254,6 +254,62 @@ try {
         -Sbom (Copy-JsonObject -Value $baseSbom) `
         -LockFile (Copy-JsonObject -Value $baseLock)
 
+    $transitiveClosureLock = Copy-JsonObject -Value $baseLock
+    $transitiveClosureLock.dependencies.net472.'Transitive.Package' |
+        Add-Member `
+            -NotePropertyName dependencies `
+            -NotePropertyValue ([pscustomobject][ordered]@{
+                'Leaf.Package' = '3.0.0'
+            })
+    $transitiveClosureLock.dependencies.net472 |
+        Add-Member `
+            -NotePropertyName 'Leaf.Package' `
+            -NotePropertyValue ([pscustomobject][ordered]@{
+                type = 'Transitive'
+                resolved = '3.0.0'
+                contentHash = ('C' * 86) + '=='
+            })
+    $transitiveClosureSbom = Copy-JsonObject -Value $baseSbom
+    $transitiveClosureSbom.packages += [pscustomobject][ordered]@{
+        SPDXID = 'SPDXRef-Package-Leaf'
+        name = 'Leaf.Package'
+        versionInfo = '3.0.0'
+    }
+    $transitiveClosureSbom.relationships += @(
+        [pscustomobject][ordered]@{
+            spdxElementId = 'SPDXRef-Package-Direct'
+            relationshipType = 'DEPENDS_ON'
+            relatedSpdxElement = 'SPDXRef-Package-Leaf'
+        },
+        [pscustomobject][ordered]@{
+            spdxElementId = 'SPDXRef-Package-Transitive'
+            relationshipType = 'DEPENDS_ON'
+            relatedSpdxElement = 'SPDXRef-Package-Leaf'
+        }
+    )
+    Assert-Accepted `
+        -Name 'valid-transitive-closure' `
+        -Sbom $transitiveClosureSbom `
+        -LockFile $transitiveClosureLock
+
+    $missingTransitiveClosureEdge =
+        Copy-JsonObject -Value $transitiveClosureSbom
+    $missingTransitiveClosureEdge.relationships = @(
+        $missingTransitiveClosureEdge.relationships |
+            Where-Object {
+                -not (
+                    [string]$_.spdxElementId -ceq
+                        'SPDXRef-Package-Direct' -and
+                    [string]$_.relatedSpdxElement -ceq
+                        'SPDXRef-Package-Leaf')
+            }
+    )
+    Assert-Rejected `
+        -Name 'missing-transitive-closure-edge' `
+        -Sbom $missingTransitiveClosureEdge `
+        -LockFile $transitiveClosureLock `
+        -MessageFragment 'relationship count'
+
     $packageNameOnlyDocument = Copy-JsonObject -Value $baseSbom
     $packageNameOnlyDocument.name = 'WireSockUI-test'
     Assert-Rejected `
@@ -372,6 +428,19 @@ try {
         -Sbom (Copy-JsonObject -Value $baseSbom) `
         -LockFile $unlockedDependency `
         -MessageFragment 'unlocked dependency'
+
+    $cyclicLock = Copy-JsonObject -Value $baseLock
+    $cyclicLock.dependencies.net472.'Transitive.Package' |
+        Add-Member `
+            -NotePropertyName dependencies `
+            -NotePropertyValue ([pscustomobject][ordered]@{
+                'Direct.Package' = '1.0.0'
+            })
+    Assert-Rejected `
+        -Name 'lock-dependency-cycle' `
+        -Sbom (Copy-JsonObject -Value $baseSbom) `
+        -LockFile $cyclicLock `
+        -MessageFragment 'dependency cycle'
 
     $orphanedLock = Copy-JsonObject -Value $baseLock
     $orphanedLock.dependencies.net472 |
