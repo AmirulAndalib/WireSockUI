@@ -856,6 +856,7 @@ try {
         "--property:OutputPath=$($outputPath.TrimEnd('\', '/'))\",
         "--property:IntermediateOutputPath=$($intermediatePath.TrimEnd('\', '/'))\",
         "--property:OutputName=WireSockUI-$Version-win-$normalizedArchitecture-$Flavor",
+        '--property:CreateHardLinksForCopyFilesToOutputDirectoryIfPossible=false',
         '--property:ContinuousIntegrationBuild=true'
     )
     if ($NoRestore) {
