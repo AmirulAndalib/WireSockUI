@@ -22,10 +22,7 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$ValidationMetadataPath,
 
-    [string]$WixToolPath,
-
-    [switch]$RequireSignature,
-    [switch]$AllowUnsignedPayload
+    [string]$WixToolPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -90,12 +87,9 @@ if (-not [string]::IsNullOrWhiteSpace($ValidationMetadataPath)) {
     }
 }
 
-if ($RequireSignature) {
-    $signature = Get-AuthenticodeSignature -LiteralPath $resolvedMsiPath
-    if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
-        throw "MSI must have a valid Authenticode signature. Status: $($signature.Status)."
-    }
-}
+& (Join-Path $PSScriptRoot 'Test-UnsignedArtifacts.ps1') `
+    -Path $resolvedMsiPath |
+    Out-Null
 
 $installer = $null
 $database = $null
@@ -1439,6 +1433,7 @@ try {
         'ListBox',
         'Media',
         'MsiLockPermissionsEx',
+        'MsiShortcutProperty',
         'Property',
         'Registry',
         'RegLocator',
@@ -1633,6 +1628,18 @@ try {
                 }
         ) -join '; '
         throw "MSI does not contain exactly the Start menu and desktop WireSock UI shortcuts: $shortcutDescription"
+    }
+
+    # Schema order: MsiShortcutProperty, Shortcut_, PropertyKey,
+    # PropVariantValue. The installer-owned Start-menu shortcut is the sole
+    # registration point for the UWP notification AppUserModelID.
+    $shortcutPropertyRows = @(Get-MsiRows -Sql 'SELECT * FROM `MsiShortcutProperty`')
+    if ($shortcutPropertyRows.Count -ne 1 -or
+        [string]$shortcutPropertyRows[0][0] -cnotmatch '^[A-Za-z_][A-Za-z0-9_.]{0,71}$' -or
+        [string]$shortcutPropertyRows[0][1] -cne 'WireSockStartMenuShortcut' -or
+        [string]$shortcutPropertyRows[0][2] -cne 'System.AppUserModel.ID' -or
+        [string]$shortcutPropertyRows[0][3] -cne 'WireSock.Foundation.WireSock.UI') {
+        throw 'MSI notification AppUserModelID authoring differs from its exact installer-owned shortcut invariant.'
     }
 
     # Schema order: Registry, Root, Key, Name, Value, Component_.
@@ -2148,7 +2155,7 @@ try {
         StartMenuShortcutFeature = @{
             Parent = 'CoreFeature'
             Title = 'Start menu shortcut'
-            Description = 'Add WireSock UI to the Start menu'
+            Description = 'Add WireSock UI to the Start menu and enable notifications'
             Display = 2
             Level = 1
             Attributes = 8
@@ -2405,12 +2412,9 @@ try {
                 -Path $extractedManagedAssemblyPath `
                 -ExpectedPlatform $expectedValidatorPlatform |
                 Out-Null
-            if (-not $AllowUnsignedPayload) {
-                $launcherSignature = Get-AuthenticodeSignature -LiteralPath $extractedLauncherPath
-                if ($launcherSignature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
-                    throw "Extracted WireSockUI.exe has invalid Authenticode status $($launcherSignature.Status)."
-                }
-            }
+            & (Join-Path $PSScriptRoot 'Test-UnsignedArtifacts.ps1') `
+                -Path $extractionRoot |
+                Out-Null
         }
         finally {
             if ([IO.Directory]::Exists($extractionRoot)) {

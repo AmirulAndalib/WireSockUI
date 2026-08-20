@@ -1,17 +1,58 @@
-# WireSockUI
+# WireSock UI
 
-WireSockUI is a lightweight WinForms interface for managing WireSock tunnels through the WireSock SDK `wgbooster.dll` API. It is intended for installations that provide the driver, the C++ CLI/service components, and `wgbooster.dll` directly.
+WireSock UI is a simple Windows desktop client for creating, importing, and controlling WireSock VPN tunnels. It uses the direct WireSock SDK installed with WireSock VPN Client CLI; it is not a client for the newer WireSock Secure Connect service API.
 
-WireSockUI does not talk to the newer WireSock Secure Connect service API. Keep using this project when you need the direct SDK/DLL integration model.
+## Install
+
+### 1. Install WireSock VPN Client CLI and SDK
+
+Open Windows Terminal or PowerShell and run:
+
+```powershell
+winget install --id NTKERNEL.WireSockVPNClientCLI --exact --source winget
+```
+
+This installs the WireSock driver, CLI components, and the SDK `wgbooster.dll` used by WireSock UI. If WinGet is unavailable, download the matching x86, x64, or ARM64 WireSock VPN Client CLI installer from the [official WireSock website](https://www.wiresock.net/).
+
+### 2. Install WireSock UI
+
+Download the MSI for your computer from [WireSock UI Releases](https://github.com/wiresock/WireSockUI/releases):
+
+- `WireSockUI-<version>-win-x64-uwp.msi` — recommended for most Intel/AMD Windows computers.
+- `WireSockUI-<version>-win-arm64-uwp.msi` — for Windows on ARM computers.
+- `WireSockUI-<version>-win-x86-uwp.msi` — only for 32-bit Windows.
+- Choose the corresponding `no-uwp` package if you want the core client without Windows notifications or automatic update checks.
+
+Both flavors install the same desktop UI. The `uwp` flavor adds Windows notifications and automatic update checks.
+
+Starting with version `0.3.0`, WireSock UI releases are intentionally unsigned. Windows therefore displays **Unknown publisher** during installation. Verify the downloaded MSI against its published `.sha256` file when installing from a downloaded copy.
+
+The installer can add WireSock UI to the Start menu and create a desktop shortcut. Both options are selected by default. The UWP flavor uses the installer-owned Start-menu shortcut to register Windows notifications; if you deselect that shortcut, notifications remain disabled and WireSock UI does not recreate it later.
+
+### 3. Add and activate a tunnel
+
+1. Start **WireSock UI** and accept the administrator prompt.
+2. Select **Add Tunnel** to import an existing WireGuard/WireSock `.conf` file or create a new profile.
+3. Select the profile and click **Activate**.
+
+Do not run the WireSock CLI, service, or another direct-SDK tunnel at the same time. These clients share ownership of the WireSock driver session.
 
 ## Requirements
 
-- Windows 10 or later with a matching-architecture WireSock SDK installation.
-- `wgbooster.dll` installed through the WireSock SDK/minimal installer. Application-adjacent copies are intentionally ignored.
-- The WireSock driver installed and usable by the current system.
-- .NET Framework 4.7.2 or later for x86 and x64, or .NET Framework 4.8.1 or later for ARM64. .NET Framework 4.8.1 is the first release with a native ARM64 CLR.
-- Administrator privileges. Start the signed native `WireSockUI.exe` host; `WireSockUI.Managed.dll` is a library and is not an application entry point. The host owns the UAC boundary, removes CLR/AppDomain injection environment variables, validates and locks the complete runtime payload, and then starts the .NET Framework CLR inside the same process with `WireSockUI.exe.config`. The elevated token must belong to the account signed in to the current desktop session; over-the-shoulder UAC credentials from a different administrator are rejected so per-user autorun and notification artifacts cannot be redirected to that account.
-- Installation through an official architecture- and flavor-specific MSI. The supported locations are the fixed, private `%ProgramFiles%\WireSock Foundation WireSock UI` leaf for x64/ARM64 and `%ProgramFiles(x86)%\WireSock Foundation WireSock UI` for x86. Network shares, mapped drives, removable media, reparse-point paths, user-writable copies, extracted build artifacts, and portable ZIP deployments are unsupported and rejected.
+- Windows 10 or later.
+- A matching-architecture WireSock VPN Client CLI/SDK installation.
+- Administrator privileges.
+- .NET Framework 4.7.2 or later for x86/x64, or .NET Framework 4.8.1 or later for ARM64.
+- The official WireSock UI MSI. Portable copies and loose publish directories are unsupported.
+
+<details>
+<summary>Technical runtime, configuration, migration, and security notes</summary>
+
+### Runtime and SDK discovery
+
+Start the native `WireSockUI.exe` host; `WireSockUI.Managed.dll` is a library and is not an application entry point. Release binaries are intentionally unsigned. The host owns the UAC boundary, removes CLR/AppDomain injection environment variables, validates and locks the complete runtime payload, and then starts the .NET Framework CLR inside the same process with `WireSockUI.exe.config`. The elevated token must belong to the account signed in to the current desktop session; over-the-shoulder UAC credentials from a different administrator are rejected so per-user autorun and notification artifacts cannot be redirected to that account.
+
+The supported installation locations are the fixed, private `%ProgramFiles%\WireSock Foundation WireSock UI` leaf for x64/ARM64 and `%ProgramFiles(x86)%\WireSock Foundation WireSock UI` for x86. Network shares, mapped drives, removable media, reparse-point paths, user-writable copies, extracted build artifacts, and portable ZIP deployments are unsupported and rejected.
 
 Before loading the CLR, the native host validates its local fixed-drive path, owner and DACL, link and reparse state, architecture, `WireSockUI.exe.config`, and every file named by its embedded canonical payload manifest. Each manifest entry includes the exact relative path, size, and SHA-256 digest. Unexpected files and missing or changed payload files fail closed, and validated directories and files remain open for the lifetime of the process so they cannot be replaced between verification and use. Managed startup performs a second bounded validation of the elevated runtime and registered SDK location.
 
@@ -21,9 +62,9 @@ At startup WireSockUI looks for `wgbooster.dll` in this order:
 2. WireSock Secure Connect Pro SDK registry install locations under `HKLM\Software\WireSock Foundation\WireSock Secure Connect Pro`.
 3. The legacy WireSock VPN Client registry location under `HKLM\SOFTWARE\NTKernelResources\WinpkFilterForVPNClient`.
 
-For each registered install location it checks `sdk`, `bin`, and the install root. WireSockUI validates the directory, `wgbooster.dll`, and executable/DLL companion ownership and ACLs, then loads the exact validated DLL with a restricted DLL search path instead of changing the machine-wide environment or relying on `PATH`. A signed WireSockUI launcher therefore cannot be repackaged with an arbitrary adjacent SDK DLL. SDK companion validation is limited to 1,024 entries per candidate directory.
+For each registered install location it checks `sdk`, `bin`, and the install root. WireSockUI validates the directory, `wgbooster.dll`, and executable/DLL companion ownership and ACLs, then loads the exact validated DLL with a restricted DLL search path instead of changing the machine-wide environment or relying on `PATH`. The protected WireSockUI installation therefore cannot be repackaged with an arbitrary adjacent SDK DLL. SDK companion validation is limited to 1,024 entries per candidate directory.
 
-## Configuration Notes
+### Configuration Notes
 
 WireSock-specific directives use the current SDK's exact, case-sensitive `#@ws:` comment-extension syntax:
 
@@ -40,7 +81,7 @@ The elevated native engine receives only the exact, allowlisted `[Interface]` an
 
 Amnezia 2.0 padding values `S1` through `S4` must be in the range `0..1279`. When any Amnezia padding/header option is present, `S1`, `S2`, and `H1` through `H4` are required; `S3` and `S4` remain optional. `H1` through `H4` accept fixed decimal values or inclusive decimal ranges and must not overlap after blank/zero values resolve to their WireGuard defaults. `Jmin` and `Jmax` must be specified together with `Jmin < Jmax`, and pre-handshake size/delay settings require either `Jc` or `Id`. Protocol imitation accepts the SDK's short and long protocol names, such as `quic`/`quic_initial` and `stun`/`stun_request`.
 
-## Migration Notes
+### Migration Notes
 
 - Configuration section names, recognized key names, and `#@ws:` are validated with the same casing as the current SDK. Correct older lowercase or colon-less directives before activation.
 - Unknown sections and directives are rejected instead of being passed through to the elevated native parser. Update WireSockUI and the WireSock SDK together before using a newly introduced configuration key.
@@ -76,6 +117,11 @@ If a native connect or cleanup call does not return, WireSockUI marks the state 
 
 Bounded diagnostic logs are written to `%ProgramData%\WireSockUI\Logs\WireSockUI.log`. The current log is limited to 1 MiB with three rotated archives, uses an administrators-only ACL, and redacts WireGuard private keys, preshared keys, SOCKS5 passwords, and URI credentials. Native UI logs are also bounded and drained in batches; retained native records are limited to 4,096 UTF-16 code units and carry a `[truncated]` suffix when shortened. The log view reports how many entries were dropped when either queue is saturated. Include these logs when reporting startup, recovery, or SDK-loading failures.
 
+</details>
+
+<details>
+<summary>Compatibility, building, release, and maintainer notes</summary>
+
 ## Compatibility Notes
 
 - The native `wgbooster.dll` ABI is expected to match the current SDK headers, including log levels, network-lock exports, and `drop_tunnel(..., preserve_network_lock)`.
@@ -96,22 +142,22 @@ dotnet publish WireSockUI\WireSockUI.csproj --configuration Release --framework 
 
 Release builds require the Visual C++ Build Tools and Windows SDK. `scripts\Build-NativeBootstrap.ps1` compiles the architecture-matched `WireSockUI.exe`, embeds the canonical path/size/SHA-256 payload manifest and native application manifest, and verifies the linked manifest and version resources. The managed output is `WireSockUI.Managed.dll`; the native host loads its public hosted entry point in-process under `WireSockUI.exe.config`.
 
-`version.json` defines the major/minor build-version epoch. `scripts\Resolve-BuildVersion.ps1` combines it with the protected branch's first-parent history to produce one canonical `MAJOR.MINOR.BUILD` value. On a feature branch or GitHub pull-request merge ref, it treats the complete candidate as one prospective protected-branch change and refuses branches that are not based on the protected tip. The merge that first introduces the file continues the published `v0.2.8` sequence as `0.2.9`; each later merged pull request increments the build component once, regardless of how many commits the pull request contained. Keep rebase merging disabled: merge commits and squash merges each add exactly one first-parent commit. CI and hosted SDK validation pass that same value to the managed assembly, native launcher, MSI, validation metadata, and artifact names. Release builds require this explicit value; unversioned development builds use `0.0.0` and cannot silently claim a release identity. Run the resolver from a complete, current Git checkout when a local packaging command needs the candidate or protected-branch version. Official release tags remain an explicit release decision, must use the current resolved version, and use the protected `release-vMAJOR.MINOR.BUILD` namespace.
+`version.json` defines the current major/minor build-version epoch. `scripts\Resolve-BuildVersion.ps1` combines it with the protected branch's first-parent history to produce one canonical `MAJOR.MINOR.BUILD` value. Changing `version.json` starts a new epoch at its configured `buildNumberStart`; this change starts `0.3.0`, and each later merged pull request becomes `0.3.1`, `0.3.2`, and so on. On any other feature branch or GitHub pull-request merge ref, the resolver treats the complete candidate as one prospective protected-branch change and refuses branches that are not based on the protected tip. Keep rebase merging disabled: merge commits and squash merges each add exactly one first-parent commit. CI and hosted SDK validation pass that same value to the managed assembly, native launcher, MSI, validation metadata, and artifact names. Release builds require this explicit value; unversioned development builds use `0.0.0` and cannot silently claim a release identity. Run the resolver from a complete, current Git checkout when a local packaging command needs the candidate or protected-branch version. Official release tags remain an explicit release decision, must use the current resolved version, and use the protected `release-vMAJOR.MINOR.BUILD` namespace.
 
-Build an MSI only from a completed architecture-specific publish directory after signing its native host. For example:
+Build an MSI only from a completed architecture-specific publish directory. The builder rejects any payload module with an embedded Authenticode certificate table and verifies the output MSI is also unsigned. For example:
 
 ```powershell
 dotnet restore WireSockUI.Installer\WireSockUI.Installer.wixproj --locked-mode
 .\scripts\Build-Msi.ps1 `
   -Platform x64 `
-  -Version 1.2.3 `
+  -Version 0.3.0 `
   -Flavor no-uwp `
   -PayloadDirectory .\bin\x64\Release\net472-windows\publish `
   -OutputDirectory .\artifacts\msi `
   -NoRestore
 ```
 
-Use `x86`, `x64`, or `ARM64` with `no-uwp` or `uwp`. `-AllowUnsignedPayload` exists only for local installer testing; supported releases require an Authenticode-signed native host and a separately signed MSI. See [WireSockUI.Installer/README.md](WireSockUI.Installer/README.md) for package validation and disposable-machine installation tests.
+Use `x86`, `x64`, or `ARM64` with `no-uwp` or `uwp`. Starting with `0.3.0`, supported releases are unsigned MSIs containing only unsigned application EXE/DLL modules. No code-signing certificate or signing environment variable is used by local builds, CI, or release publication. See [WireSockUI.Installer/README.md](WireSockUI.Installer/README.md) for package validation and disposable-machine installation tests.
 
 Use `-- --list-tests` to list test names or `-- --filter "profile catalog"` to run a focused subset with full exception diagnostics. Each executed test has a two-minute timeout, and CI jobs have explicit overall timeouts so a deadlock reports the active test instead of occupying a runner indefinitely.
 
@@ -127,38 +173,27 @@ Install a dedicated organization GitHub App with only Self-hosted runners (read)
 
 The **Hosted WireSock SDK experiment** is an automated x64 and ARM64 compatibility check and does not replace connected-state validation with protected real profiles. It runs after protected `main` updates, weekly, or by manual dispatch, and authorizes only the current protected `main` tip before allocating matching disposable GitHub-hosted Windows VMs. GitHub does not provide a native 32-bit Windows hosted runner, and the WireSock x86 SDK installer intentionally rejects 64-bit Windows, so x86 SDK lifecycle validation requires the protected self-hosted x86-workload pool described above; ordinary hosted CI still builds and installation-tests WireSockUI's x86 package. Each hosted SDK job downloads the exact architecture-specific WireSock installer URI recorded in the audited WinGet manifest without depending on the runner's WinGet availability, verifies its pinned SHA-256 and Authenticode signature, waits for installation completion, rejects a signed `wgbooster.dll` with the wrong PE architecture, builds and installation-tests the matching unsigned candidate MSI, and exercises the real SDK lifecycle with synthetic profiles restricted to IANA documentation networks. The synthetic lifecycle validates handle creation, Kill Switch transitions, tunnel creation/start/state/stop/drop, and cleanup without asserting external connectivity to the intentionally unreachable TEST-NET peer. The experiment uses no VPN credentials or repository secrets and relies on disposal of the ephemeral VM if package cleanup is unavailable. Use **Actions → Hosted WireSock SDK experiment → Run workflow** for an additional current-tip run; treat a green result as architecture/runtime compatibility evidence, not proof of a successful VPN handshake.
 
-When signing or protected real-SDK runners are unavailable, use **Actions → Unsigned internal release candidate → Run workflow** for an internal packaging rehearsal. It automatically uses the current protected `main` tip's resolved build version, after successful current-tip CI and hosted SDK experiment push runs, rebuilds and validates all six architecture/flavor MSIs, and repeats architecture-matched installation smoke tests. The resulting `UNSIGNED-INTERNAL-RC-*` bundle is retained for 14 days and contains an explicit warning plus SHA-256 checksums. These packages are deliberately unsigned, are not published to GitHub Releases, must be used only on disposable test systems, and are not supported for redistribution or application updates.
+Before tagging a release, use **Actions → Unsigned internal release candidate → Run workflow** for an internal packaging rehearsal. It automatically uses the current protected `main` tip's resolved build version, after successful current-tip CI and hosted SDK experiment push runs, rebuilds and validates all six architecture/flavor MSIs, and repeats architecture-matched installation smoke tests. The resulting `UNSIGNED-INTERNAL-RC-*` bundle is retained for 14 days and contains an explicit warning plus SHA-256 checksums. These packages use the same unsigned binary policy as official releases, but are not published to GitHub Releases and must be used only on disposable test systems.
 
 Native state and statistics polling use bounded asynchronous queries. If `wgbooster.dll` does not return before the query timeout, WireSockUI stops issuing additional native operations, records a recovery marker, and requires recovery or restart. Startup also compares the process and `wgbooster.dll` PE architectures so x86/x64/ARM64 mismatches are reported directly.
 
 ## Releases
 
-The supported release artifacts are six per-machine MSIs: x86, x64, and ARM64, each in `no-uwp` and `uwp` flavors. Portable ZIPs and loose publish directories are not distributed or supported. The workflow builds the six payloads on hosted runners, signs each root-level native `WireSockUI.exe` through Azure Artifact Signing with OIDC, proves every other payload file (including the unsigned `WireSockUI.Managed.dll`) remains byte-identical, packages and signs all six MSIs, and revalidates every signed cabinet against the launcher's embedded payload manifest and a persistent validation document.
+The supported release artifacts are six per-machine MSIs: x86, x64, and ARM64, each in `no-uwp` and `uwp` flavors. Portable ZIPs and loose publish directories are not distributed or supported. Starting with `0.3.0`, the workflow builds six explicitly unsigned payloads on hosted runners, rejects any application EXE/DLL module with an embedded Authenticode certificate table, packages them into six unsigned MSIs, and revalidates every cabinet against the launcher's embedded payload manifest and a persistent validation document. There is no binary-signing or package-signing job.
 
-Each MSI is published with a separate SPDX SBOM, `*.msi.validation.json` payload inventory, and SHA-256 sidecars for all three assets. GitHub artifact-provenance attestations cover the MSI, validation document, and SBOM. These metadata files are external release evidence and are not added to the installed runtime. Release publication revalidates the signed annotated tag and every checksum immediately before upload and after publication. An interrupted matching draft is resumed only when its tag, target, title, exact asset inventory, sizes, and digests remain consistent; mismatched, duplicate, or unexpected remote state is rejected. GitHub immutable releases must be enabled before signing, and a published matching immutable release is accepted only after every asset is independently verified with a patched GitHub CLI. Enabling the repository setting does not retroactively make historical releases immutable, so treat older releases as legacy evidence. No exportable PFX or long-lived signing secret is stored in GitHub.
+Each MSI is published with a separate SPDX SBOM, `*.msi.validation.json` payload inventory, and SHA-256 sidecars for all three assets. GitHub artifact-provenance attestations cover the MSI, validation document, and SBOM. These metadata files are external release evidence and are not added to the installed runtime. Release publication revalidates the authorized annotated tag and every checksum immediately before upload and after publication. An interrupted matching draft is resumed only when its tag, target, title, exact asset inventory, sizes, and digests remain consistent; mismatched, duplicate, or unexpected remote state is rejected. GitHub immutable releases must be enabled before publication, and a published matching immutable release is accepted only after every asset is independently verified with a patched GitHub CLI. Enabling the repository setting does not retroactively make historical releases immutable, so treat older releases as legacy evidence. No PFX, code-signing certificate, Azure signing identity, or signing-related environment variable is required.
 
 The MSI ProductCode is deterministic for version, architecture, and flavor, while all packages share one UpgradeCode. Reinstalling the identical version/architecture/flavor enters Windows Installer maintenance/repair. A same-version flavor or architecture transition is handled as a major upgrade rather than a side-by-side install; this support is for an explicit transition, not for replacing an already-published package with different bytes. Downgrades are blocked. Close WireSock UI and disable autorun for affected accounts before changing architecture, because x86 and native 64-bit packages use different Program Files roots and per-user scheduled tasks are path-bound.
 
 The interactive MSI lets users independently select all-users Start-menu and desktop shortcuts; both are selected by default, their feature states migrate across upgrades, and maintenance mode can change them later. Uninstall removes only MSI-owned runtime files, installer registry data, and whichever of those shortcuts were installed. It does not enumerate or delete other users' scheduled tasks or notification state, and it preserves application-created profiles, protected preferences, recovery data, and logs under `%ProgramData%`. Disable per-user autorun before uninstalling; remove retained user data separately only when it is no longer needed. Unknown files placed in the installation directory are not recursively deleted.
 
-Protect the `release-signing` environment with independent reviewers, self-review prevention, and protected `release-v*.*.*` tags. The signing job must run only through `wiresock/WireSockUI/.github/workflows/release-signing.yml@0440f3d3a42216a23ce455686ce983b88af62a3e`. Configure the repository OIDC subject template with the exact ordered claims `[repo, context, job_workflow_ref]`, then configure the Azure federated identity for `repo:wiresock/WireSockUI:environment:release-signing:job_workflow_ref:wiresock/WireSockUI/.github/workflows/release-signing.yml@0440f3d3a42216a23ce455686ce983b88af62a3e`. Grant only Certificate Profile Signer. The Artifact Signing endpoint must be an HTTPS root URI on the official `codesigning.azure.net` service; tenant, client, and subscription values must be GUIDs. Set these protected environment variables:
+The `release-publish` environment must require independent reviewers, prevent self-review, disable administrator bypass, and allow exactly the custom tag policy `release-v*.*.*`. The release preflight also requires organization ownership and enabled immutable releases. Configure repository Actions policy to require full-SHA action pinning, remove the retired Azure signing actions from the allowlist, limit allowed actions to the audited set, and protect `main` with required status checks, stale-review dismissal, approval of the latest push, signed commits, resolved conversations, and administrator enforcement. The required checks must include the dependency audit, SDK contract, all six managed architecture/flavor test variants, all six publish checks, all three native-host smoke variants, all three architecture-matched MSI install smoke variants, architecture isolation, and transition smoke, bound to the GitHub Actions App rather than accepting same-named third-party statuses. Repository rules must restrict creation, update, and deletion of the active `release-v*.*.*` namespace and the retired `v*` namespace.
 
-- `AZURE_ARTIFACT_SIGNING_CLIENT_ID`
-- `AZURE_ARTIFACT_SIGNING_TENANT_ID`
-- `AZURE_ARTIFACT_SIGNING_SUBSCRIPTION_ID`
-- `AZURE_ARTIFACT_SIGNING_ENDPOINT`
-- `AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME`
-- `AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME`
-- `AZURE_ARTIFACT_SIGNING_EXPECTED_SUBJECT`
-- `AZURE_ARTIFACT_SIGNING_EXPECTED_TIMESTAMP_SUBJECT`
-
-Both `release-signing` and the separate `release-publish` environment must require independent reviewers, prevent self-review, disable administrator bypass, and allow exactly the custom tag policy `release-v*.*.*`. The release preflight also requires organization ownership and enabled immutable releases. Configure repository Actions policy to require full-SHA action pinning, limit allowed actions to the audited set, and protect `main` with required status checks, stale-review dismissal, approval of the latest push, signed commits, resolved conversations, and administrator enforcement. The required checks must include the dependency audit, SDK contract, all six managed architecture/flavor test variants, all six publish checks, all three native-host smoke variants, all three architecture-matched MSI install smoke variants, architecture isolation, and transition smoke, bound to the GitHub Actions App rather than accepting same-named third-party statuses. Repository rules must restrict creation, update, and deletion of the active `release-v*.*.*` namespace and the retired `v*` namespace.
-
-Install a dedicated GitHub App on this repository with only repository Administration (read) and Actions (read) permissions so the workflow can inspect immutable-release, environment, Actions, and OIDC policy. Store `RELEASE_POLICY_READER_CLIENT_ID` as an environment variable and `RELEASE_POLICY_READER_PRIVATE_KEY` as an environment secret in both `release-signing` and `release-publish`. Each protected job exchanges them for a short-lived, repository-scoped token; the normal `GITHUB_TOKEN` cannot read all required settings and is not used for this check.
+Install a dedicated GitHub App on this repository with only repository Administration (read) and Actions (read) permissions so the workflow can inspect immutable-release, environment, Actions, and OIDC policy. Store `RELEASE_POLICY_READER_CLIENT_ID` as an environment variable and `RELEASE_POLICY_READER_PRIVATE_KEY` as an environment secret only in `release-publish`. The protected publication job exchanges them for a short-lived, repository-scoped token; the normal `GITHUB_TOKEN` cannot read all required settings and is not used for this check.
 
 As a mandatory external repository control, every organization or repository ruleset contributing to `main` or to tag update/deletion restrictions must have an empty bypass-actor list. Put active `release-v*.*.*` creation in a separate creation-only ruleset whose bypass list contains only a narrowly scoped, audited release-tagger user, team, or App; never grant broad roles, administrators, or deploy keys this bypass. Keep update and deletion in separate zero-bypass ruleset layers so even the release tagger cannot move or delete a created tag. The retired `v*` namespace must have zero-bypass update/deletion rules and should retain a zero-bypass creation rule to keep it permanently retired. The read-only checker verifies effective rules for the exact active and corresponding legacy tag, requires the active creation ruleset IDs to be disjoint from mutation ruleset IDs, and probes a representative retired tag, but the full wildcard coverage remains an independently audited configuration requirement. GitHub withholds bypass actors from an Administration (read) token, so the checker cannot enumerate their contents. Do not grant the policy-reader App Administration (write) merely to inspect them, because that would turn a read-only release gate into a repository-takeover credential. Classic branch-protection PR bypass allowances are visible to the read-only checker and must remain empty.
 
-Release tags must be signed annotated tags in strict `release-vMAJOR.MINOR.PATCH` form, resolve directly to the current protected `main` tip, and have a GitHub-verified cryptographic signature. Create them with `git tag -s release-vMAJOR.MINOR.PATCH`; lightweight, unsigned, stale-main, moved, or legacy `v*` tags are rejected. The workflow binds the signed tag object's internal name and exact object ID during authorization, then revalidates both after signing approval, immediately before publication, and after publication. Rotate or delete legacy release PAT/PFX secrets (including `MY_GITHUB_PAT`) before enabling the new namespace. Publication uses only the repository `GITHUB_TOKEN`. Until the organization runner group, protected environments, repository rules, signing variables, OIDC claim template, exact reusable-workflow pins, and immutable-release setting are all configured, integration and release execution is intentionally unavailable rather than silently weakening these controls.
+Release tags remain signed annotated Git metadata in strict `release-vMAJOR.MINOR.PATCH` form, resolve directly to the current protected `main` tip, and have a GitHub-verified cryptographic signature. This tag signature authorizes the source revision; it does not sign any binary or MSI. Create tags with `git tag -s release-vMAJOR.MINOR.PATCH`; lightweight, unsigned, stale-main, moved, or legacy `v*` tags are rejected. The workflow binds the tag object's internal name and exact object ID during authorization, then revalidates both immediately before publication and after publication. Rotate or delete legacy release PAT/PFX and Azure signing secrets (including `MY_GITHUB_PAT` and all `AZURE_ARTIFACT_SIGNING_*` values). Publication uses only the repository `GITHUB_TOKEN`. Until the organization runner group, protected publication environment, repository rules, OIDC claim template, exact reusable-workflow pins, and immutable-release setting are configured, integration and release execution is intentionally unavailable rather than silently weakening these controls.
 
 ## Remaining Runtime Risks
 
@@ -167,6 +202,8 @@ Release tags must be signed annotated tags in strict `release-vMAJOR.MINOR.PATCH
 - The global `WiresockClientService` event is an SDK compatibility primitive shared with the direct C++ CLI. WireSockUI rejects unexpected owners and broad ACLs, but changing to a private authenticated namespace requires a coordinated SDK change.
 - The direct SDK API still requires the managed tunnel coordinator to run elevated. The native launcher prevents mutable pre-CLR startup and untrusted shell activation, while lifecycle, profile, autorun, and UI responsibilities are isolated behind bounded coordinators; a fully medium-integrity UI would require an authenticated broker/service protocol and coordinated SDK ownership changes.
 - The `WireSockUI.Tests` harness covers parser/profile validation, native error-sentinel handling, lifecycle cleanup and bounded monitoring through a deterministic native facade, ACL checks, architecture matching, transactional profile renames, reparse-point rejection, and STA construction/disposal of classic and UWP dialogs. Real driver and `wgbooster.dll` validation remains environment-specific and is handled by the SDK Integration workflow.
+
+</details>
 
 ## License
 

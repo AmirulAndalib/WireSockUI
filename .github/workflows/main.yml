@@ -223,10 +223,7 @@ jobs:
           if (-not (Test-Path -LiteralPath $managedAssembly -PathType Leaf)) {
             throw "Managed payload '$managedAssembly' is missing from the release payload."
           }
-          if ((Get-AuthenticodeSignature -FilePath $managedAssembly).Status -ne
-              [System.Management.Automation.SignatureStatus]::NotSigned) {
-            throw 'WireSockUI.Managed.dll must remain outside the release signing target set.'
-          }
+          ./scripts/Test-UnsignedArtifacts.ps1 -Path $payload
           ./scripts/Test-NativeBootstrap.ps1 `
             -LauncherPath $bootstrap `
             -ExpectedPlatform $env:BUILD_PLATFORM `
@@ -253,33 +250,16 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  sign:
-    needs:
-      - authorize-release
-      - build
-    permissions:
-      actions: read
-      contents: read
-      id-token: write
-    uses: wiresock/WireSockUI/.github/workflows/release-signing.yml@0440f3d3a42216a23ce455686ce983b88af62a3e
-    with:
-      trusted_sha: ${{ needs.authorize-release.outputs.trusted_sha }}
-      trusted_tag_oid: ${{ needs.authorize-release.outputs.trusted_tag_oid }}
-      release_tag: ${{ github.ref_name }}
-      version: ${{ needs.authorize-release.outputs.version }}
-
   package:
     needs:
       - authorize-release
-      - sign
+      - build
     runs-on: windows-latest
     timeout-minutes: 45
     permissions:
       contents: read
     env:
       WIRESOCKUI_VERSION: ${{ needs.authorize-release.outputs.version }}
-      EXPECTED_SIGNER_SUBJECT: ${{ needs.sign.outputs.expected_signer_subject }}
-      EXPECTED_TIMESTAMP_SUBJECT: ${{ needs.sign.outputs.expected_timestamp_subject }}
     steps:
       - name: Checkout authorized release tooling
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -313,34 +293,30 @@ jobs:
             throw 'Locked installer restore and dependency audit failed.'
           }
 
-      - name: Download signed payloads
+      - name: Download exact unsigned payload set
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: signed-release-payloads
+          pattern: 'unsigned-WireSockUI-v${{ needs.authorize-release.outputs.version }}-*'
           path: unsigned
+          merge-multiple: false
 
-      - name: Download signed MSI packages
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: signed-release-msis
-          path: signed-msis
-
-      - name: Reverify signed native bootstraps
+      - name: Validate unsigned payloads and build unsigned MSI packages
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $payloads = @(Get-ChildItem -LiteralPath unsigned -Directory)
+          $payloads = @(Get-ChildItem -LiteralPath unsigned -Directory | Sort-Object Name)
           if ($payloads.Count -ne 6) {
-            throw "Expected six signed payloads, found $($payloads.Count)."
+            throw "Expected six unsigned payloads, found $($payloads.Count)."
           }
 
-          $bootstraps = @()
+          $output = New-Item -ItemType Directory -Path packages
           foreach ($payload in $payloads) {
             if ($payload.Name -notmatch '\Aunsigned-WireSockUI-v(?<version>[0-9]+\.[0-9]+\.[0-9]+)-(?<architecture>x86|x64|ARM64)-(?<flavor>no-uwp|uwp)\z' -or
                 $Matches.version -cne $env:WIRESOCKUI_VERSION) {
-              throw "Unexpected signed payload name '$($payload.Name)'."
+              throw "Unexpected unsigned payload name '$($payload.Name)'."
             }
             $architecture = $Matches.architecture
+            $flavor = $Matches.flavor
             $bootstrap = Join-Path $payload.FullName 'WireSockUI.exe'
             $bootstrapCopies = @(Get-ChildItem -LiteralPath $payload.FullName -Recurse -File -Filter WireSockUI.exe)
             if ($bootstrapCopies.Count -ne 1 -or
@@ -348,17 +324,25 @@ jobs:
               throw "Artifact '$($payload.Name)' must contain exactly one root-level WireSockUI.exe bootstrap."
             }
 
+            ./scripts/Test-UnsignedArtifacts.ps1 -Path $payload.FullName
             ./scripts/Test-NativeBootstrap.ps1 `
               -LauncherPath $bootstrap `
               -ExpectedPlatform $architecture `
-              -ExpectedVersion $env:WIRESOCKUI_VERSION `
-              -RequireSignature
-            $bootstraps += $bootstrap
+              -ExpectedVersion $env:WIRESOCKUI_VERSION
+            ./scripts/Build-Msi.ps1 `
+              -Platform $architecture `
+              -Version $env:WIRESOCKUI_VERSION `
+              -Flavor $flavor `
+              -PayloadDirectory $payload.FullName `
+              -OutputDirectory $output.FullName `
+              -NoRestore
           }
-          ./scripts/Test-ReleaseSignature.ps1 `
-            -FilePath $bootstraps `
-            -ExpectedSignerSubject $env:EXPECTED_SIGNER_SUBJECT `
-            -ExpectedTimestampSubject $env:EXPECTED_TIMESTAMP_SUBJECT
+
+          $msis = @(Get-ChildItem -LiteralPath packages -File -Filter '*.msi')
+          if ($msis.Count -ne 6) {
+            throw "Expected six validated unsigned MSI packages, found $($msis.Count)."
+          }
+          ./scripts/Test-MsiArchitectureIsolation.ps1 -MsiPath $msis.FullName
 
       - name: Install pinned SBOM tool
         shell: pwsh
@@ -372,7 +356,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $tool = Join-Path $env:RUNNER_TEMP 'sbom-tool\sbom-tool.exe'
-          $output = New-Item -ItemType Directory -Path signed -Force
+          $output = New-Item -ItemType Directory -Path release-assets -Force
           $componentRoot = (Resolve-Path -LiteralPath WireSockUI).Path
           $sbomWorkRoot = Join-Path $env:RUNNER_TEMP 'WireSockUI-Sbom'
           if (Test-Path -LiteralPath $sbomWorkRoot) {
@@ -383,14 +367,10 @@ jobs:
           $seenSbomNamespaces =
             [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 
-          $msis = @(Get-ChildItem -LiteralPath signed-msis -File -Filter '*.msi' | Sort-Object Name)
+          $msis = @(Get-ChildItem -LiteralPath packages -File -Filter '*.msi' | Sort-Object Name)
           if ($msis.Count -ne 6) {
-            throw "Expected six signed MSI packages, found $($msis.Count)."
+            throw "Expected six unsigned MSI packages, found $($msis.Count)."
           }
-          ./scripts/Test-ReleaseSignature.ps1 `
-            -FilePath $msis.FullName `
-            -ExpectedSignerSubject $env:EXPECTED_SIGNER_SUBJECT `
-            -ExpectedTimestampSubject $env:EXPECTED_TIMESTAMP_SUBJECT
           foreach ($msi in $msis) {
             if ($msi.Name -notmatch '\AWireSockUI-(?<version>[0-9]+\.[0-9]+\.[0-9]+)-win-(?<architecture>x86|x64|arm64)-(?<flavor>no-uwp|uwp)\.msi\z' -or
                 $Matches.version -cne $env:WIRESOCKUI_VERSION) {
@@ -404,8 +384,7 @@ jobs:
               -ExpectedArchitecture $architecture `
               -ExpectedVersion $env:WIRESOCKUI_VERSION `
               -ExpectedFlavor $flavor `
-              -ValidationMetadataPath $metadata `
-              -RequireSignature
+              -ValidationMetadataPath $metadata
             Copy-Item -LiteralPath $msi.FullName -Destination $output.FullName
             Copy-Item -LiteralPath $metadata -Destination $output.FullName
           }
@@ -413,7 +392,7 @@ jobs:
           foreach ($payload in $payloads) {
             if ($payload.Name -notmatch '\Aunsigned-WireSockUI-v(?<version>[0-9]+\.[0-9]+\.[0-9]+)-(?<architecture>x86|x64|ARM64)-(?<flavor>no-uwp|uwp)\z' -or
                 $Matches.version -cne $env:WIRESOCKUI_VERSION) {
-              throw "Unexpected signed payload name '$($payload.Name)'."
+              throw "Unexpected unsigned payload name '$($payload.Name)'."
             }
             $architecture = $Matches.architecture.ToLowerInvariant()
             $flavor = $Matches.flavor
@@ -453,7 +432,7 @@ jobs:
               $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $sourcePath).Hash.ToLowerInvariant()
               if ([Int64]$sourceFile.Length -ne [Int64]$fileEntry.Size -or
                   $actualHash -cne [string]$fileEntry.Sha256) {
-                throw "Signed payload '$relativePath' no longer matches validated MSI metadata."
+                throw "Unsigned payload '$relativePath' no longer matches validated MSI metadata."
               }
               [void](New-Item -ItemType Directory -Path (Split-Path -Parent $destinationPath) -Force)
               Copy-Item -LiteralPath $sourcePath -Destination $destinationPath
@@ -511,11 +490,11 @@ jobs:
               Set-Content -LiteralPath "$($releaseFile.FullName).sha256" -Encoding ascii
           }
 
-      - name: Upload signed release assets
+      - name: Upload unsigned release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: signed-release-assets
-          path: signed
+          name: unsigned-release-assets
+          path: release-assets
           if-no-files-found: error
           retention-days: 14
 
@@ -529,19 +508,19 @@ jobs:
       attestations: write
       artifact-metadata: write
     steps:
-      - name: Download signed release assets
+      - name: Download unsigned release assets
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: signed-release-assets
-          path: signed
+          name: unsigned-release-assets
+          path: release-assets
 
-      - name: Attest signed release assets
+      - name: Attest unsigned release assets
         uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4
         with:
           subject-path: |
-            signed/*.msi
-            signed/*.msi.validation.json
-            signed/*.spdx.json
+            release-assets/*.msi
+            release-assets/*.msi.validation.json
+            release-assets/*.spdx.json
 
   upload-release:
     if: ${{ success() }}
@@ -584,12 +563,12 @@ jobs:
           -Repository $env:RELEASE_REPOSITORY
           -GitHubApiUrl $env:RELEASE_API_URL
           -ReleaseTag $env:RELEASE_TAG
-          -RequiredEnvironment release-signing,release-publish
+          -RequiredEnvironment release-publish
 
       - name: Download artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: signed-release-assets
+          name: unsigned-release-assets
           path: 'artifacts'
 
       - name: Publish or safely resume immutable release
@@ -635,7 +614,7 @@ jobs:
       - name: Download exact published asset source
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: signed-release-assets
+          name: unsigned-release-assets
           path: artifacts
 
       - name: Independently verify immutable release and provenance

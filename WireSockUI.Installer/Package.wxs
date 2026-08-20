@@ -149,7 +149,11 @@
             WorkingDirectory="WireSockInstallFolder"
             Advertise="no"
             Icon="WireSockUI.ico"
-            IconIndex="0" />
+            IconIndex="0">
+          <ShortcutProperty
+              Key="System.AppUserModel.ID"
+              Value="WireSock.Foundation.WireSock.UI" />
+        </Shortcut>
         <RegistryValue
             Root="HKLM"
             Key="Software\WireSock Foundation\WireSock UI"
@@ -208,7 +212,7 @@
       <Feature
           Id="StartMenuShortcutFeature"
           Title="Start menu shortcut"
-          Description="Add WireSock UI to the Start menu"
+          Description="Add WireSock UI to the Start menu and enable notifications"
           Level="1"
           AllowAdvertise="no" />
       <Feature

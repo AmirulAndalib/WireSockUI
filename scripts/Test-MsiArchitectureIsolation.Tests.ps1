@@ -386,8 +386,7 @@ function Assert-PackageValidatorRejects {
             -ValidationMetadataPath $ValidationMetadataPath `
             -ExpectedArchitecture $ExpectedArchitecture `
             -ExpectedVersion $ExpectedVersion `
-            -ExpectedFlavor $ExpectedFlavor `
-            -AllowUnsignedPayload |
+            -ExpectedFlavor $ExpectedFlavor |
             Out-Null
     }
     catch {

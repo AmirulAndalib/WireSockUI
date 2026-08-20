@@ -20,6 +20,7 @@ namespace WireSockUI.Notifications
         private static readonly Lazy<WindowsApplicationContext> ApplicationContext =
             new Lazy<WindowsApplicationContext>(
                 () => WindowsApplicationContext.FromCurrentProcess(
+                    customName: Resources.FormMain,
                     activationExecutablePath: Program.ApplicationLauncherPath));
         private static bool _notificationIconReady;
         private static WeakReference _activationForm;

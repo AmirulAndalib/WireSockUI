@@ -22,12 +22,10 @@ $productionWorkflowDigests = @{
     # These are intentionally exact contracts for production control flow. A
     # digest is not an authenticity mechanism; it makes every workflow change
     # explicit and subject to focused trust-boundary review.
-    'ci.yml' = '7a432f3293de70fc3c6306ae4375e600e39d0f7b6322ee3fe5163c5eca7fcce2'
+    'ci.yml' = '4a9c7bfa3fdab4b1c8ff5084d2c9b9c8a1cd469db730c83187605df1fbd5c997'
     'hosted-sdk-experiment.yml' =
         'bf33b7604f89031f7030f791d2dbaa87df9c16b6ef5e7a6d45eca60eb17d7e79'
-    'main.yml' = '81f94e720f5ddff209936e4f1c59e4c119d46351f3ab4dc1c1891f820aff5cdd'
-    'release-signing.yml' =
-        '88b3e309933fdc767ac5aeed1cbd70ce849eab8041529241355f64ed8be3d99c'
+    'main.yml' = '1cb8bf03a9a2d6b1900b5d5b4dd9d9039fdaf5098495fe08cd70947045e4642a'
     'sdk-contract-drift.yml' =
         '0d47460aa8e978157d397d26d40dcae9a6c300457b2695d104ff158e61cad771'
     'sdk-integration-schedule.yml' =
@@ -35,7 +33,7 @@ $productionWorkflowDigests = @{
     'sdk-integration.yml' =
         '64cf1be4a6ffe9779aadabb1fa4c887736e3cd55940291aea92da32c0771b849'
     'unsigned-release-candidate.yml' =
-        '4aeb2466b5b2086c88285046503bf1b5ed83bcccc9da1b9946d4cde6324a7ff4'
+        '983f10fdc4e6bd2cdb6e6a7eb79922331b254cc9871083f6fda12dd8d135bdc2'
 }
 $forbiddenShellSourcePattern = (
     '(?i)(?:' +
@@ -57,9 +55,6 @@ foreach ($value in @(
         'actions/download-artifact',
         'actions/setup-dotnet',
         'actions/upload-artifact',
-        'azure/artifact-signing-action',
-        'azure/login',
-        'wiresock/WireSockUI/.github/workflows/release-signing.yml',
         'wiresock/WireSockUI/.github/workflows/sdk-integration.yml')) {
     [void]$allowedUses.Add($value)
 }
@@ -764,7 +759,7 @@ if ($enforceProductionContracts) {
         [regex]::Matches(
             $productionText,
             'wiresock/WireSockUI/\.github/workflows/' +
-                '(?:sdk-integration|release-signing)\.yml@' +
+                'sdk-integration\.yml@' +
                 '(?<sha>[0-9a-f]{40})') |
             ForEach-Object { $_.Groups['sha'].Value })
     $sdkInputPins = @(
@@ -772,9 +767,9 @@ if ($enforceProductionContracts) {
             $productionText,
             '(?m)^\s+sdk_workflow_sha:\s*(?<sha>[0-9a-f]{40})\s*$') |
             ForEach-Object { $_.Groups['sha'].Value })
-    if ($callerPins.Count -ne 4 -or $sdkInputPins.Count -ne 3) {
+    if ($callerPins.Count -ne 3 -or $sdkInputPins.Count -ne 3) {
         throw (
-            'Production workflows must contain exactly four privileged ' +
+            'Production workflows must contain exactly three privileged ' +
             'reusable-workflow callers and three SDK workflow SHA inputs.')
     }
     $allProductionPins = @($callerPins) + @($sdkInputPins)
@@ -782,148 +777,6 @@ if ($enforceProductionContracts) {
         throw (
             'All privileged reusable-workflow callers and SDK workflow SHA ' +
             'inputs must use the same immutable implementation revision.')
-    }
-}
-
-$releaseSigningPath =
-    Join-Path $workflowRoot.FullName 'release-signing.yml'
-if (Test-Path -LiteralPath $releaseSigningPath -PathType Leaf) {
-    $releaseSigningWorkflow = Get-Content `
-        -LiteralPath $releaseSigningPath `
-        -Raw `
-        -Encoding UTF8
-    $authorizationMarker =
-        '      - name: Validate reusable-workflow release identity'
-    $authorizationStart = $releaseSigningWorkflow.IndexOf(
-        $authorizationMarker,
-        [StringComparison]::Ordinal)
-    $authorizationEnd = if ($authorizationStart -ge 0) {
-        $releaseSigningWorkflow.IndexOf(
-            '      - name:',
-            $authorizationStart + $authorizationMarker.Length,
-            [StringComparison]::Ordinal)
-    }
-    else {
-        -1
-    }
-    if ($authorizationStart -lt 0 -or $authorizationEnd -lt 0) {
-        throw 'The protected signing workflow is missing its bounded, first-party authorization step.'
-    }
-
-    foreach ($criticalReleaseStep in @(
-            'Validate reusable-workflow release identity',
-            'Verify authorized release candidate checkout',
-            'Verify trusted release policy tooling checkout',
-            'Revalidate signed tag before protected signing',
-            'Verify protected release repository policy',
-            'Snapshot exact bootstrap signing scope',
-            'Revalidate tag immediately before OIDC authentication',
-            'Verify exact signed bootstrap scope',
-            'Snapshot exact MSI signing scope',
-            'Revalidate tag immediately before MSI signing',
-            'Verify exact signed MSI scope and embedded payloads',
-            'Revalidate tag after signing and before artifact upload')) {
-        Assert-WorkflowCriticalStep `
-            -WorkflowText $releaseSigningWorkflow `
-            -StepName $criticalReleaseStep `
-            -Description 'The protected signing workflow'
-    }
-
-    $authorizationScript = Get-WorkflowLiteralRunScript `
-        -WorkflowText $releaseSigningWorkflow `
-        -StepName 'Validate reusable-workflow release identity' `
-        -Description 'The protected signing workflow'
-    Assert-PowerShellExecutableLines `
-        -Script $authorizationScript `
-        -Description 'The protected signing authorization step' `
-        -RequiredLines @(
-            '$env:CALLER_SHA -cne $env:TRUSTED_SHA -or',
-            '$env:LOADED_WORKFLOW_REPOSITORY -cne ''wiresock/WireSockUI'' -or',
-            '$env:LOADED_WORKFLOW_FILE_PATH -cne ''.github/workflows/release-signing.yml'') {',
-            '$env:LOADED_WORKFLOW_SHA -cnotmatch ''\A[0-9a-f]{40}\z'') {',
-            '-Uri "$apiRoot/repos/$env:RELEASE_REPOSITORY/git/ref/heads/$env:DEFAULT_BRANCH"',
-            '$currentMainSha -cne $env:TRUSTED_SHA) {',
-            '-Uri "$apiRoot/repos/$env:RELEASE_REPOSITORY/git/ref/tags/$env:RELEASE_TAG"',
-            '[string]$tagRef.object.sha -cne $env:TRUSTED_TAG_OID) {',
-            '-Uri "$apiRoot/repos/$env:RELEASE_REPOSITORY/git/tags/$env:TRUSTED_TAG_OID"',
-            '$tagObject.verification.verified -ne $true -or',
-            '[string]$tagObject.object.sha -cne $env:TRUSTED_SHA) {')
-
-    $firstCandidateScript = [regex]::Match(
-        $releaseSigningWorkflow,
-        '(?m)^(?:\s+\./scripts/[A-Za-z0-9_.-]+\.ps1\b|\s+(?:-\s+)?run:\s+\./scripts/[A-Za-z0-9_.-]+\.ps1\b)')
-    if ($firstCandidateScript.Success -and
-        $firstCandidateScript.Index -lt $authorizationEnd) {
-        throw 'The protected signing workflow executes candidate release scripts before independent authorization completes.'
-    }
-    $firstPrivilegedDependency = [regex]::Match(
-        $releaseSigningWorkflow,
-        '(?m)^\s+uses:\s+(?:actions/create-github-app-token|azure/login|azure/artifact-signing-action)@')
-    if ($firstPrivilegedDependency.Success -and
-        $firstPrivilegedDependency.Index -lt $authorizationEnd) {
-        throw 'The protected signing workflow invokes a privileged dependency before independent authorization completes.'
-    }
-
-    $releaseSigningExecutableLines =
-        [Collections.Generic.HashSet[string]]::new(
-            [StringComparer]::Ordinal)
-    foreach ($releaseSigningLine in
-        ($releaseSigningWorkflow -split '\r?\n')) {
-        [void]$releaseSigningExecutableLines.Add(
-            $releaseSigningLine.Trim())
-    }
-    foreach ($requiredTrustedLine in @(
-            'repository: ${{ job.workflow_repository }}',
-            'ref: ${{ job.workflow_sha }}',
-            'path: .trusted-release-tooling')) {
-        if (-not $releaseSigningExecutableLines.Contains(
-                $requiredTrustedLine)) {
-            throw "The protected signing workflow is missing trusted-tooling boundary '$requiredTrustedLine'."
-        }
-    }
-
-    $releaseToolingVerificationScript = Get-WorkflowLiteralRunScript `
-        -WorkflowText $releaseSigningWorkflow `
-        -StepName 'Verify trusted release policy tooling checkout' `
-        -Description 'The protected signing workflow'
-    Assert-PowerShellExecutableLines `
-        -Script $releaseToolingVerificationScript `
-        -Description 'The trusted release-tooling verification step' `
-        -RequiredLines @(
-            "git -C `$tooling.FullName rev-parse 'HEAD^{commit}'",
-            '$toolingSha -cne $env:LOADED_WORKFLOW_SHA) {')
-
-    $releaseCommands = @(
-        Get-WorkflowPowerShellCommands `
-            -WorkflowText $releaseSigningWorkflow `
-            -Description 'The protected signing workflow')
-    foreach ($trustedValidator in @(
-            'Test-ReleaseTag',
-            'Test-ReleaseRepositoryPolicy',
-            'Test-ReleaseSigningPayload',
-            'Test-NativeBootstrap',
-            'Test-MsiArchitectureIsolation',
-            'Test-MsiPackage')) {
-        $trustedCommand =
-            "./.trusted-release-tooling/scripts/$trustedValidator.ps1"
-        $matchingValidatorCommands = @(
-            $releaseCommands |
-                Where-Object {
-                    $_ -ceq $trustedCommand -or
-                    $_ -match (
-                        '(?i)(?:^|[\\/])' +
-                        [regex]::Escape($trustedValidator) +
-                        '\.ps1$')
-                })
-        if ($matchingValidatorCommands.Count -lt 1) {
-            throw "The protected signing workflow must invoke trusted validator '$trustedValidator'."
-        }
-        foreach ($matchingValidatorCommand in
-            $matchingValidatorCommands) {
-            if ([string]$matchingValidatorCommand -cne $trustedCommand) {
-                throw "The protected signing workflow invokes '$trustedValidator' outside the workflow-pinned trusted tooling tree."
-            }
-        }
     }
 }
 

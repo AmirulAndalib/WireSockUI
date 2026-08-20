@@ -168,7 +168,34 @@ if ($headCommit -cne $protectedCommit) {
 
 $protectedHasConfiguration =
     Test-VersionConfigurationAtCommit -Commit $protectedCommit
-if (-not $protectedHasConfiguration) {
+if ($candidateIncrement -eq 1) {
+    $configurationDiff = @(& git `
+            -C $repositoryPath `
+            diff `
+            --name-only `
+            $protectedCommit `
+            $headCommit `
+            -- `
+            version.json 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to compare candidate version configuration: $($configurationDiff -join ' ')"
+    }
+    $candidateStartsNewEpoch = @(
+        $configurationDiff |
+            ForEach-Object { ([string]$_).Trim() } |
+            Where-Object { $_ -ceq 'version.json' }
+    ).Count -eq 1
+}
+else {
+    $candidateStartsNewEpoch = $false
+}
+
+if ($candidateStartsNewEpoch) {
+    # The PR that changes the version configuration is the first build in the
+    # new epoch. Its configured buildNumberStart is therefore used unchanged.
+    $buildsAfterEpoch = 0
+}
+elseif (-not $protectedHasConfiguration) {
     if ($candidateIncrement -ne 1) {
         throw 'The protected commit does not contain version.json.'
     }
@@ -179,7 +206,6 @@ else {
             -C $repositoryPath `
             rev-list `
             --first-parent `
-            --reverse `
             $protectedCommit `
             -- `
             version.json 2>&1)
@@ -193,7 +219,7 @@ else {
     )
     if ($epochCommits.Count -lt 1 -or
         $epochCommits[0] -cnotmatch '\A[0-9a-f]{40,64}\z') {
-        throw 'Git did not identify the first-parent build version epoch.'
+        throw 'Git did not identify the current first-parent build version epoch.'
     }
 
     $historyOutput = @(& git `

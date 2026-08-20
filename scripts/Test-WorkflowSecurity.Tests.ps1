@@ -40,13 +40,6 @@ $validShorthandWorkflow = $validWorkflow -replace (
 $validManualWorkflow = $validWorkflow -replace (
     '(?m)^  push:\s*$'),
     "  workflow_dispatch:`n  push:"
-$releaseSigningWorkflow = Get-Content `
-    -LiteralPath (
-        Join-Path (
-            Split-Path -Parent $PSScriptRoot
-        ) '.github\workflows\release-signing.yml') `
-    -Raw `
-    -Encoding UTF8
 $sdkIntegrationWorkflow = Get-Content `
     -LiteralPath (
         Join-Path (
@@ -91,14 +84,14 @@ $productionUnsignedReleaseCandidateWorkflow = Get-Content `
 $productionPinMatch = [regex]::Match(
     $productionMainWorkflow,
     'wiresock/WireSockUI/\.github/workflows/' +
-        '(?:sdk-integration|release-signing)\.yml@(?<sha>[0-9a-f]{40})')
+        'sdk-integration\.yml@(?<sha>[0-9a-f]{40})')
 if (-not $productionPinMatch.Success) {
     throw 'The production workflow fixture has no immutable implementation pin.'
 }
 $productionPinnedRevision = $productionPinMatch.Groups['sha'].Value
 $privilegedCallerPattern =
     '(?m)(uses:\s+wiresock/WireSockUI/\.github/workflows/' +
-    '(?:sdk-integration|release-signing)\.yml)@[0-9a-f]{40}'
+    'sdk-integration\.yml)@[0-9a-f]{40}'
 $mutableProductionMainWorkflow = [Text.RegularExpressions.Regex]::new(
     $privilegedCallerPattern
 ).Replace(
@@ -119,9 +112,6 @@ function Invoke-Fixture {
 
         [Parameter(Mandatory = $true)]
         [bool] $ShouldPass,
-
-        [Parameter()]
-        [string] $ReleaseSigningWorkflow,
 
         [Parameter()]
         [string] $SdkIntegrationWorkflow,
@@ -152,12 +142,6 @@ function Invoke-Fixture {
         -Value $Workflow `
         -Encoding utf8
 
-    if (-not [string]::IsNullOrEmpty($ReleaseSigningWorkflow)) {
-        Set-Content `
-            -LiteralPath (Join-Path $fixture 'release-signing.yml') `
-            -Value $ReleaseSigningWorkflow `
-            -Encoding utf8
-    }
     if (-not [string]::IsNullOrEmpty($SdkIntegrationWorkflow)) {
         Set-Content `
             -LiteralPath (Join-Path $fixture 'sdk-integration.yml') `
@@ -247,9 +231,6 @@ function Invoke-ProductionContractFixture {
         [string] $MainWorkflow = $productionMainWorkflow,
 
         [Parameter()]
-        [string] $ReleaseWorkflow = $releaseSigningWorkflow,
-
-        [Parameter()]
         [string] $SdkWorkflow = $sdkIntegrationWorkflow,
 
         [Parameter()]
@@ -268,7 +249,6 @@ function Invoke-ProductionContractFixture {
     Invoke-Fixture `
         -Name $Name `
         -Workflow $MainWorkflow `
-        -ReleaseSigningWorkflow $ReleaseWorkflow `
         -SdkIntegrationWorkflow $SdkWorkflow `
         -RequireProductionContracts $true `
         -AdditionalWorkflowName $AdditionalWorkflowName `
@@ -291,22 +271,14 @@ try {
         -Workflow $validManualWorkflow `
         -ShouldPass $true
     Invoke-Fixture `
-        -Name valid-trusted-release-signing-boundary `
-        -Workflow $validWorkflow `
-        -ReleaseSigningWorkflow $releaseSigningWorkflow `
-        -SdkIntegrationWorkflow $sdkIntegrationWorkflow `
-        -ShouldPass $true
-    Invoke-Fixture `
-        -Name valid-production-release-workflow `
+        -Name valid-production-workflow `
         -Workflow $productionMainWorkflow `
-        -ReleaseSigningWorkflow $releaseSigningWorkflow `
         -SdkIntegrationWorkflow $sdkIntegrationWorkflow `
         -RequireProductionContracts $true `
         -ShouldPass $true
     Invoke-Fixture `
         -Name mutable-production-privileged-caller `
         -Workflow $mutableProductionMainWorkflow `
-        -ReleaseSigningWorkflow $releaseSigningWorkflow `
         -SdkIntegrationWorkflow $sdkIntegrationWorkflow `
         -RequireProductionContracts $true `
         -ShouldPass $false
@@ -319,11 +291,6 @@ try {
         -Name production-contract-detects-unmodeled-change `
         -MainWorkflow (
             $productionMainWorkflow +
-            "`n# Any production workflow change requires contract review.")
-    Invoke-ProductionContractFixture `
-        -Name production-contract-locks-release-workflow `
-        -ReleaseWorkflow (
-            $releaseSigningWorkflow +
             "`n# Any production workflow change requires contract review.")
     Invoke-ProductionContractFixture `
         -Name production-contract-locks-sdk-workflow `
@@ -384,17 +351,10 @@ try {
             '',
             1))
     Invoke-ProductionContractFixture `
-        -Name production-sign-drops-build-dependency `
+        -Name production-package-drops-build-dependency `
         -MainWorkflow ([regex]::Replace(
             $productionMainWorkflow,
-            '(?m)(^  sign:\r?\n(?:.*\r?\n){0,5}?)^      - build\r?\n',
-            '$1',
-            1))
-    Invoke-ProductionContractFixture `
-        -Name production-package-drops-sign-dependency `
-        -MainWorkflow ([regex]::Replace(
-            $productionMainWorkflow,
-            '(?m)(^  package:\r?\n(?:.*\r?\n){0,5}?)^      - sign\r?\n',
+            '(?m)(^  package:\r?\n(?:.*\r?\n){0,5}?)^      - build\r?\n',
             '$1',
             1))
     Invoke-ProductionContractFixture `
@@ -434,40 +394,6 @@ try {
             '        run: |
           return
           ./scripts/Test-ReleaseRepositoryPolicy.ps1')
-    Invoke-ProductionContractFixture `
-        -Name production-release-environment-rebound `
-        -ReleaseWorkflow $releaseSigningWorkflow.Replace(
-            '    environment: release-signing',
-            '    environment: release-publish')
-    Invoke-ProductionContractFixture `
-        -Name production-release-job-skipped `
-        -ReleaseWorkflow $releaseSigningWorkflow.Replace(
-            '  sign:
-    runs-on:',
-            '  sign:
-    if: ${{ false }}
-    runs-on:')
-    Invoke-ProductionContractFixture `
-        -Name production-release-job-error-suppressed `
-        -ReleaseWorkflow $releaseSigningWorkflow.Replace(
-            '  sign:
-    runs-on:',
-            '  sign:
-    continue-on-error: true
-    runs-on:')
-    Invoke-ProductionContractFixture `
-        -Name production-release-context-rebound `
-        -ReleaseWorkflow $releaseSigningWorkflow.Replace(
-            '          CALLER_SHA: ${{ github.sha }}',
-            '          CALLER_SHA: ${{ inputs.trusted_sha }}')
-    Invoke-ProductionContractFixture `
-        -Name production-release-authorization-short-circuited `
-        -ReleaseWorkflow ([regex]::Replace(
-            $releaseSigningWorkflow,
-            '(?m)(^      - name: Validate reusable-workflow release identity' +
-                '\r?\n(?:.*\r?\n){0,15}?^        run: \|\r?\n)',
-            "`$1          return`n",
-            1))
     Invoke-ProductionContractFixture `
         -Name production-sdk-configuration-skipped `
         -SdkWorkflow $sdkIntegrationWorkflow.Replace(
@@ -524,120 +450,12 @@ try {
           }
           catch {
           }')
-    $unsignedReleaseWorkflow = $releaseSigningWorkflow.Replace(
-        '      - name: Sign native bootstraps with Azure Artifact Signing',
-        '      - name: Sign native bootstraps with Azure Artifact Signing
-        if: ${{ false }}').Replace(
-        '      - name: Sign MSI packages with Azure Artifact Signing',
-        '      - name: Sign MSI packages with Azure Artifact Signing
-        if: ${{ false }}').Replace(
-        '      - name: Verify exact signed bootstrap scope
-        shell: pwsh
-        run: |',
-        '      - name: Verify exact signed bootstrap scope
-        shell: pwsh
-        run: |
-          return').Replace(
-        '      - name: Verify exact signed MSI scope and embedded payloads
-        shell: pwsh
-        run: |',
-        '      - name: Verify exact signed MSI scope and embedded payloads
-        shell: pwsh
-        run: |
-          return')
-    $unsignedPublicationMainWorkflow = $productionMainWorkflow.Replace(
-        '      - name: Reverify signed native bootstraps
-        shell: pwsh
-        run: |',
-        '      - name: Reverify signed native bootstraps
-        shell: pwsh
-        run: |
-          return').Replace(
-        '              -RequireSignature',
-        '')
-    $unsignedPublicationMainWorkflow = [regex]::Replace(
-        $unsignedPublicationMainWorkflow,
-        '(?ms)^          \./scripts/Test-ReleaseSignature\.ps1 `\r?\n' +
-            '            -FilePath \$msis\.FullName `\r?\n' +
-            '            -ExpectedSignerSubject .*?' +
-            "^          }\r?\n",
-        '',
-        1)
-    Invoke-ProductionContractFixture `
-        -Name production-unsigned-publication-chain `
-        -MainWorkflow $unsignedPublicationMainWorkflow `
-        -ReleaseWorkflow $unsignedReleaseWorkflow
-    Invoke-Fixture `
-        -Name candidate-release-validator `
-        -Workflow $validWorkflow `
-        -ReleaseSigningWorkflow $releaseSigningWorkflow.Replace(
-            './.trusted-release-tooling/scripts/Test-ReleaseTag.ps1',
-            './scripts/Test-ReleaseTag.ps1') `
-        -ShouldPass $false
-    Invoke-Fixture `
-        -Name caller-sha-used-as-release-tooling-source `
-        -Workflow $validWorkflow `
-        -ReleaseSigningWorkflow $releaseSigningWorkflow.Replace(
-            '${{ job.workflow_sha }}',
-            '${{ github.workflow_sha }}') `
-        -ShouldPass $false
     Invoke-Fixture `
         -Name caller-sha-used-as-sdk-tooling-source `
         -Workflow $validWorkflow `
         -SdkIntegrationWorkflow $sdkIntegrationWorkflow.Replace(
             '${{ job.workflow_sha }}',
             '${{ github.workflow_sha }}') `
-        -ShouldPass $false
-    Invoke-Fixture `
-        -Name candidate-script-before-independent-authorization `
-        -Workflow $validWorkflow `
-        -ReleaseSigningWorkflow $releaseSigningWorkflow.Replace(
-            '      - name: Validate reusable-workflow release identity',
-            '      - name: Execute unauthorized candidate script
-        shell: pwsh
-        run: ./scripts/Build-Msi.ps1
-
-      - name: Validate reusable-workflow release identity') `
-        -ShouldPass $false
-    Invoke-Fixture `
-        -Name incomplete-independent-release-authorization `
-        -Workflow $validWorkflow `
-        -ReleaseSigningWorkflow $releaseSigningWorkflow.Replace(
-            '$currentMainSha -cne $env:TRUSTED_SHA',
-            '$currentMainSha -cne $currentMainSha') `
-        -ShouldPass $false
-    Invoke-Fixture `
-        -Name string-spoofed-independent-release-authorization `
-        -Workflow $validWorkflow `
-        -ReleaseSigningWorkflow (
-            $releaseSigningWorkflow.Replace(
-                '$currentMainSha -cne $env:TRUSTED_SHA) {',
-                '$false) {').Replace(
-                '          $apiUri = $null',
-                '          $spoof = "ignored
-          $currentMainSha -cne $env:TRUSTED_SHA) {
-          ignored"
-          $apiUri = $null')) `
-        -ShouldPass $false
-    Invoke-Fixture `
-        -Name skipped-independent-release-authorization `
-        -Workflow $validWorkflow `
-        -ReleaseSigningWorkflow $releaseSigningWorkflow.Replace(
-            '      - name: Validate reusable-workflow release identity
-        shell: pwsh',
-            '      - name: Validate reusable-workflow release identity
-        if: ${{ false }}
-        shell: pwsh') `
-        -ShouldPass $false
-    Invoke-Fixture `
-        -Name suppressed-independent-release-authorization-failure `
-        -Workflow $validWorkflow `
-        -ReleaseSigningWorkflow $releaseSigningWorkflow.Replace(
-            '      - name: Validate reusable-workflow release identity
-        shell: pwsh',
-            '      - name: Validate reusable-workflow release identity
-        continue-on-error: true
-        shell: pwsh') `
         -ShouldPass $false
     Invoke-Fixture `
         -Name skipped-sdk-authorization `

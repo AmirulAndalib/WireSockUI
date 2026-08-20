@@ -153,6 +153,9 @@
   <data name="ButtonActive" xml:space="preserve">
     <value>Deactivate</value>
   </data>
+  <data name="ButtonClearLog" xml:space="preserve">
+    <value>Clear log</value>
+  </data>
   <data name="ButtonEdit" xml:space="preserve">
     <value>Edit</value>
   </data>

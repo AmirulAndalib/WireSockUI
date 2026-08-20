@@ -216,9 +216,7 @@ function global:Invoke-RestMethod {
                     'actions/create-github-app-token@*',
                     'actions/download-artifact@*',
                     'actions/setup-dotnet@*',
-                    'actions/upload-artifact@*',
-                    'azure/artifact-signing-action@*',
-                    'azure/login@*'
+                    'actions/upload-artifact@*'
                 )
             }
         }
@@ -247,9 +245,9 @@ function global:Invoke-RestMethod {
         'https://api.github.com/repos/wiresock/WireSockUI/rules/tags/v0.0.0?per_page=100&page=1' {
             return New-TagRules -Active $false
         }
-        'https://api.github.com/repos/wiresock/WireSockUI/environments/release-signing' {
+        'https://api.github.com/repos/wiresock/WireSockUI/environments/release-publish' {
             return [pscustomobject]@{
-                name = 'release-signing'
+                name = 'release-publish'
                 can_admins_bypass = $false
                 protection_rules = @(
                     [pscustomobject]@{
@@ -272,7 +270,7 @@ function global:Invoke-RestMethod {
                 }
             }
         }
-        'https://api.github.com/repos/wiresock/WireSockUI/environments/release-signing/deployment-branch-policies?per_page=100' {
+        'https://api.github.com/repos/wiresock/WireSockUI/environments/release-publish/deployment-branch-policies?per_page=100' {
             return [pscustomobject]@{
                 total_count = 1
                 branch_policies = @(
@@ -316,7 +314,7 @@ function Invoke-PolicyFixture {
             -Repository 'wiresock/WireSockUI' `
             -GitHubApiUrl 'https://api.github.com' `
             -ReleaseTag 'release-v1.2.3' `
-            -RequiredEnvironment 'release-signing' |
+            -RequiredEnvironment 'release-publish' |
             Out-Null
     }
     catch {
@@ -340,7 +338,7 @@ try {
             -Repository 'wiresock/WireSockUI' `
             -GitHubApiUrl 'https://api.github.com' `
             -ReleaseTag "release-v1.2.3`n" `
-            -RequiredEnvironment 'release-signing' |
+            -RequiredEnvironment 'release-publish' |
             Out-Null
     }
     catch {

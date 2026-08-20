@@ -264,16 +264,14 @@ namespace WireSockUI.Tests
                 { "Editor validates Amnezia options", EditorValidatesAmneziaOptions },
                 { "Image lists clone icons before delayed handle creation", ImageListsCloneIconsBeforeDelayedHandleCreation },
                 { "WinForms dialogs initialize and dispose on an STA thread", WinFormsDialogsInitializeAndDisposeOnStaThread },
+                { "Main window action rows remain visible after scaling", MainWindowActionRowsRemainVisibleAfterScaling },
                 { "Settings copies the secured profiles path without shell activation", SettingsCopiesSecuredProfilesPathWithoutShellActivation },
                 { "Editor bounds synchronous syntax highlighting", EditorBoundsSynchronousSyntaxHighlighting },
                 { "Editor application-rule insertion is section aware", EditorApplicationRuleInsertionIsSectionAware },
                 { "Editor application-rule insertion rejects ambiguous values", EditorApplicationRuleInsertionRejectsAmbiguousValues },
                 { "Profile display formatting bounds comma-separated values", ProfileDisplayFormattingBoundsValues },
-                { "AppUserModelID is path seeded", AppUserModelIdIsPathSeeded },
-                { "Notification shortcut name is path seeded", NotificationShortcutNameIsPathSeeded },
-                { "Notification shortcut create races are rejected without parsing", NotificationShortcutCreateRaceIsRejectedWithoutParsing },
-                { "Notification shortcut parent mutation races are blocked", NotificationShortcutParentMutationRaceIsBlocked },
-                { "Notification shortcut copy failures preserve their cause", NotificationShortcutCopyFailuresPreserveCause },
+                { "AppUserModelID matches the installer shortcut", AppUserModelIdMatchesInstallerShortcut },
+                { "Notification shortcut uses a clean display name", NotificationShortcutUsesCleanDisplayName },
                 { "Notification image paths use file URIs", NotificationImagePathsUseFileUris },
                 { "Shell link HRESULT validation uses signed failure semantics", ShellLinkHresultValidationUsesSignedFailureSemantics },
                 { "Shell link PROPVARIANT interop is architecture safe and type checked", ShellLinkPropVariantInteropIsSafe },
@@ -4156,6 +4154,68 @@ namespace WireSockUI.Tests
                 "Expected process-filter timer resources to be released.");
         }
 
+        private static void MainWindowActionRowsRemainVisibleAfterScaling()
+        {
+            using (var layout = new TableLayoutPanel
+            {
+                ColumnCount = 1,
+                RowCount = 2,
+                Size = new Size(800, 500)
+            })
+            using (var content = new Panel
+            {
+                Dock = DockStyle.Fill,
+                Margin = Padding.Empty
+            })
+            using (var actions = new FlowLayoutPanel())
+            using (var button = new Button
+            {
+                Margin = Padding.Empty,
+                Size = new Size(90, 28),
+                Text = "Clear log"
+            })
+            {
+                layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+                layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+                layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40F));
+                layout.Controls.Add(content, 0, 0);
+                layout.Controls.Add(actions, 0, 1);
+                actions.Controls.Add(button);
+
+                FrmMain.ConfigureBottomActionRow(layout, actions);
+                AssertActionButtonFits(layout, actions, button, "normal scale");
+
+                layout.Scale(new SizeF(1.5F, 1.5F));
+                layout.Size = new Size(1200, 750);
+                AssertActionButtonFits(layout, actions, button, "150% scale");
+
+                actions.Visible = false;
+                layout.PerformLayout();
+                AssertEqual(layout.ClientSize.Height, content.Height);
+            }
+        }
+
+        private static void AssertActionButtonFits(
+            TableLayoutPanel layout,
+            FlowLayoutPanel actions,
+            Button button,
+            string scenario)
+        {
+            layout.PerformLayout();
+            actions.PerformLayout();
+
+            AssertTrue(layout.RowStyles[1].SizeType == SizeType.AutoSize,
+                $"Expected a content-sized action row at {scenario}.");
+            AssertTrue(actions.Bottom <= layout.ClientSize.Height,
+                $"Expected the action row to remain inside the layout at {scenario}.");
+            AssertTrue(button.Top >= actions.Padding.Top,
+                $"Expected the action button to retain its top inset at {scenario}.");
+            AssertTrue(button.Bottom <= actions.ClientSize.Height - actions.Padding.Bottom,
+                $"Expected the action button to retain its bottom inset at {scenario}.");
+            AssertTrue(button.Right <= actions.ClientSize.Width - actions.Padding.Right,
+                $"Expected the action button to retain its right inset at {scenario}.");
+        }
+
         private static void SettingsCopiesSecuredProfilesPathWithoutShellActivation()
         {
             var folder = Path.Combine(
@@ -4468,7 +4528,7 @@ namespace WireSockUI.Tests
             });
         }
 
-        private static void AppUserModelIdIsPathSeeded()
+        private static void AppUserModelIdMatchesInstallerShortcut()
         {
             var buildDefaultAppUserModelId = typeof(WindowsApplicationContext).GetMethod(
                 "BuildDefaultAppUserModelId", BindingFlags.NonPublic | BindingFlags.Static);
@@ -4476,35 +4536,40 @@ namespace WireSockUI.Tests
                 throw new InvalidOperationException("BuildDefaultAppUserModelId helper was not found.");
 
             var first = (string)buildDefaultAppUserModelId.Invoke(null,
-                new object[] { "WireSock UI", @"C:\Program Files\WireSockUI\WireSockUI.exe" });
+                new object[] { "WireSock UI" });
             var firstAgain = (string)buildDefaultAppUserModelId.Invoke(null,
-                new object[] { "WireSock UI", @"C:\Program Files\WireSockUI\WireSockUI.exe" });
-            var second = (string)buildDefaultAppUserModelId.Invoke(null,
-                new object[] { "WireSock UI", @"D:\Tools\WireSockUI\WireSockUI.exe" });
+                new object[] { "WireSock UI" });
 
+            AssertEqual("WireSock.Foundation.WireSock.UI", first);
             AssertEqual(first, firstAgain);
-            AssertFalse(string.Equals(first, second, StringComparison.Ordinal),
-                "Expected AppUserModelID to differ for side-by-side executable paths.");
             AssertTrue(first.Length <= 128, "Expected AppUserModelID to fit the Windows shell length limit.");
         }
 
-        private static void NotificationShortcutNameIsPathSeeded()
+        private static void NotificationShortcutUsesCleanDisplayName()
         {
-            var first = WindowsApplicationContext.BuildShortcutFileName(
-                "WireSockUI", @"C:\Program Files\WireSockUI\WireSockUI.exe");
-            var second = WindowsApplicationContext.BuildShortcutFileName(
-                "WireSockUI", @"D:\Tools\WireSockUI\WireSockUI.exe");
-
-            AssertFalse(string.Equals(first, second, StringComparison.Ordinal),
-                "Expected side-by-side installs to use different notification shortcuts.");
-            AssertTrue(first.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase),
-                "Expected a shell shortcut filename.");
+            AssertEqual("WireSock UI.lnk",
+                WindowsApplicationContext.BuildShortcutFileName("WireSock UI"));
+            AssertEqual(
+                @"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\WireSock UI.lnk",
+                WindowsApplicationContext.BuildInstalledShortcutPath(
+                    @"C:\ProgramData\Microsoft\Windows\Start Menu\Programs",
+                    "WireSock UI"));
+            AssertThrows<ArgumentException>(
+                () => WindowsApplicationContext.BuildInstalledShortcutPath(" ", "WireSock UI"),
+                "all-users Start Menu path");
 
             var untrustedName = WindowsApplicationContext.BuildShortcutFileName(
-                @"..\WireSockUI/Bad:Name", @"C:\Program Files\WireSockUI\WireSockUI.exe");
+                @"..\WireSockUI/Bad:Name");
             AssertFalse(untrustedName.Contains("..") || untrustedName.Contains("\\") || untrustedName.Contains("/") ||
                         untrustedName.Contains(":"),
                 "Expected shortcut filenames to remove path and device-name metacharacters.");
+
+            var firstLegacy = WindowsApplicationContext.BuildLegacyShortcutFileName(
+                "WireSockUI", @"C:\Program Files\WireSockUI\WireSockUI.exe");
+            var secondLegacy = WindowsApplicationContext.BuildLegacyShortcutFileName(
+                "WireSockUI", @"D:\Tools\WireSockUI\WireSockUI.exe");
+            AssertFalse(string.Equals(firstLegacy, secondLegacy, StringComparison.Ordinal),
+                "Expected legacy notification shortcuts to remain discoverable by their path seed during migration.");
         }
 
         private static void NotificationImagePathsUseFileUris()
@@ -4663,7 +4728,9 @@ namespace WireSockUI.Tests
                          "WireSockUI.Managed.exe\"",
                          "CreateProcessW(",
                          "AssignProcessToJobObject",
-                         "JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE"
+                         "JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE",
+                         "signed installer",
+                         "signed launcher"
                      })
                 AssertFalse(
                     bootstrapSource.IndexOf(obsoleteBoundary, StringComparison.Ordinal) >= 0,
@@ -4696,7 +4763,7 @@ namespace WireSockUI.Tests
                      })
                 AssertTrue(
                     bootstrapValidation.IndexOf(requiredValidation, StringComparison.Ordinal) >= 0,
-                    $"Expected post-sign native bootstrap validation to enforce '{requiredValidation}'.");
+                    $"Expected native bootstrap validation to enforce '{requiredValidation}'.");
 
             AssertEqual(
                 WireSockUI.Program.NativeLauncherFileName,
@@ -4889,80 +4956,6 @@ namespace WireSockUI.Tests
                     }
                 }
             });
-        }
-
-        private static void NotificationShortcutCreateRaceIsRejectedWithoutParsing()
-        {
-            var testDirectory = Path.Combine(
-                Path.GetTempPath(), $"wiresockui-notification-shortcut-{Guid.NewGuid():N}");
-            Directory.CreateDirectory(testDirectory);
-            var stagedShortcut = Path.Combine(testDirectory, "trusted-stage.lnk");
-            var destinationShortcut = Path.Combine(testDirectory, "WireSockUI.lnk");
-            try
-            {
-                File.WriteAllBytes(stagedShortcut, new byte[] { 1, 2, 3, 4 });
-
-                AssertThrows<IOException>(
-                    () => WindowsApplicationContext.InstallTrustedNotificationShortcut(
-                        stagedShortcut,
-                        destinationShortcut,
-                        () => File.WriteAllBytes(destinationShortcut, new byte[] { 0xff, 0x00, 0xff })),
-                    "never parsed");
-                AssertFalse(File.Exists(destinationShortcut),
-                    "Expected the competing shortcut file to be deleted after the create race was rejected.");
-            }
-            finally
-            {
-                if (File.Exists(destinationShortcut))
-                    File.Delete(destinationShortcut);
-                if (File.Exists(stagedShortcut))
-                    File.Delete(stagedShortcut);
-                if (Directory.Exists(testDirectory))
-                    Directory.Delete(testDirectory);
-            }
-        }
-
-        private static void NotificationShortcutCopyFailuresPreserveCause()
-        {
-            var testDirectory = Path.Combine(
-                Path.GetTempPath(), $"wiresockui-notification-copy-{Guid.NewGuid():N}");
-            Directory.CreateDirectory(testDirectory);
-            var stagedShortcut = Path.Combine(testDirectory, "trusted-stage.lnk");
-            var destinationShortcut = Path.Combine(testDirectory, "WireSockUI.lnk");
-            try
-            {
-                File.WriteAllBytes(stagedShortcut, new byte[] { 1, 2, 3, 4 });
-                SecurityIdentifier currentUserSid;
-                using (var currentIdentity = WindowsIdentity.GetCurrent())
-                    currentUserSid = currentIdentity.User;
-                var destinationSecurity = new FileSecurity();
-                destinationSecurity.SetAccessRuleProtection(true, false);
-                destinationSecurity.SetOwner(currentUserSid);
-                destinationSecurity.AddAccessRule(new FileSystemAccessRule(
-                    currentUserSid,
-                    FileSystemRights.FullControl,
-                    AccessControlType.Allow));
-
-                AssertThrows<IOException>(
-                    () => WindowsApplicationContext.InstallTrustedNotificationShortcut(
-                        stagedShortcut,
-                        destinationShortcut,
-                        null,
-                        _ => throw new IOException("simulated notification copy failure"),
-                        destinationSecurity),
-                    "simulated notification copy failure");
-                AssertFalse(File.Exists(destinationShortcut),
-                    "Expected a partially written notification shortcut to be removed.");
-            }
-            finally
-            {
-                if (File.Exists(destinationShortcut))
-                    File.Delete(destinationShortcut);
-                if (File.Exists(stagedShortcut))
-                    File.Delete(stagedShortcut);
-                if (Directory.Exists(testDirectory))
-                    Directory.Delete(testDirectory);
-            }
         }
 
         private static void LegacyStartupShortcutIsHandledWithoutShellParsing()
@@ -6539,6 +6532,29 @@ namespace WireSockUI.Tests
                 throwingDispatches.Dequeue()();
                 AssertEqual(1, messagesAfterScheduleFailure.Count);
                 AssertEqual("after-schedule-failure", messagesAfterScheduleFailure[0].Message);
+            }
+
+            var clearDispatches = new Queue<Action>();
+            var messagesAfterClear = new List<WireSockManager.LogMessage>();
+            using (var buffer = new UiLogMessageBuffer(
+                       4,
+                       2,
+                       action =>
+                       {
+                           clearDispatches.Enqueue(action);
+                           return true;
+                       },
+                       batch => messagesAfterClear.AddRange(batch)))
+            {
+                buffer.Enqueue(new WireSockManager.LogMessage { Message = "before-clear" });
+                buffer.Clear();
+                clearDispatches.Dequeue()();
+                AssertEqual(0, messagesAfterClear.Count);
+
+                buffer.Enqueue(new WireSockManager.LogMessage { Message = "after-clear" });
+                clearDispatches.Dequeue()();
+                AssertEqual(1, messagesAfterClear.Count);
+                AssertEqual("after-clear", messagesAfterClear[0].Message);
             }
         }
 

@@ -171,6 +171,15 @@ namespace WireSockUI.Properties {
         }
 
         /// <summary>
+        ///   Looks up a localized string similar to Clear log.
+        /// </summary>
+        internal static string ButtonClearLog {
+            get {
+                return ResourceManager.GetString("ButtonClearLog", resourceCulture);
+            }
+        }
+
+        /// <summary>
         ///   Looks up a localized string similar to Edit.
         /// </summary>
         internal static string ButtonEdit {

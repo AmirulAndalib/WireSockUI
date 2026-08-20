@@ -123,6 +123,40 @@ try {
     Invoke-FixtureGit -Arguments @('commit', '-m', 'Protected update')
     Assert-Version -Expected '2.3.3'
 
+    Invoke-FixtureGit -Arguments @('switch', '-c', 'minor-release')
+    Set-Content `
+        -LiteralPath (Join-Path $temporaryRoot 'version.json') `
+        -Value @'
+{
+  "schema": 1,
+  "major": 2,
+  "minor": 4,
+  "buildNumberStart": 0
+}
+'@ `
+        -Encoding utf8
+    Invoke-FixtureGit -Arguments @('add', 'version.json')
+    Invoke-FixtureGit -Arguments @('commit', '-m', 'Start 2.4 release epoch')
+    Assert-Version -Expected '2.4.0'
+
+    Invoke-FixtureGit -Arguments @('switch', 'main')
+    Invoke-FixtureGit -Arguments @(
+        'merge',
+        '--no-ff',
+        '--no-edit',
+        'minor-release'
+    )
+    Assert-Version -Expected '2.4.0'
+
+    Invoke-FixtureGit -Arguments @('switch', '-c', 'post-minor-feature')
+    Set-Content `
+        -LiteralPath (Join-Path $temporaryRoot 'payload.txt') `
+        -Value 'post minor feature' `
+        -Encoding utf8
+    Invoke-FixtureGit -Arguments @('add', 'payload.txt')
+    Invoke-FixtureGit -Arguments @('commit', '-m', 'Post minor feature')
+    Assert-Version -Expected '2.4.1'
+
     Write-Output 'Validated deterministic first-parent build versioning.'
 }
 finally {

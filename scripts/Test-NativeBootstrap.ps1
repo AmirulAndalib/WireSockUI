@@ -12,8 +12,7 @@ param(
     [ValidatePattern('\A[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?\z')]
     [string] $ExpectedVersion,
 
-    [switch] $AllowDevelopmentBuild,
-    [switch] $RequireSignature
+    [switch] $AllowDevelopmentBuild
 )
 
 $ErrorActionPreference = 'Stop'
@@ -266,12 +265,9 @@ elseif ($ExpectedPlatform -eq 'x64') {
         }
 }
 
-if ($RequireSignature) {
-    $signature = Get-AuthenticodeSignature -LiteralPath $result.Path
-    if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
-        throw "Native launcher '$($result.Path)' has invalid Authenticode status $($signature.Status)."
-    }
-}
+& (Join-Path $PSScriptRoot 'Test-UnsignedArtifacts.ps1') `
+    -Path $result.Path |
+    Out-Null
 
 Write-Output (
     "Validated native bootstrap '$($result.Path)' " +

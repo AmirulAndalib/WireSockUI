@@ -91,6 +91,22 @@ namespace WireSockUI.Forms
             }
         }
 
+        internal void Clear()
+        {
+            lock (_syncRoot)
+            {
+                if (_disposed)
+                    return;
+
+                // Invalidate callbacks that were queued before the user cleared
+                // the log so an old batch cannot repopulate the empty view.
+                _dispatcherGeneration++;
+                _dispatchPending = false;
+                _droppedMessages = 0;
+                _messages.Clear();
+            }
+        }
+
         private void DrainBatch(long dispatcherGeneration)
         {
             List<WireSockManager.LogMessage> batch;
