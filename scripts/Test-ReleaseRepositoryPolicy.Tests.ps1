@@ -11,6 +11,8 @@ $global:ReleasePolicyTestMainRules = @()
 $global:ReleasePolicyTestBranchProtection = $null
 $global:ReleasePolicyTestRequestCount = 0
 $global:ReleasePolicyTestTagRuleOverlap = $false
+$global:ReleasePolicyTestOwnerType = 'User'
+$global:ReleasePolicyTestEnvironmentHasReviewer = $false
 
 $requiredChecks = @(
     'dependency-audit',
@@ -53,7 +55,9 @@ function New-StatusCheck {
 
 function New-MainRules {
     param(
-        [switch] $ConflictingDuplicate
+        [switch] $ConflictingDuplicate,
+
+        [switch] $WithApproval
     )
 
     $middle = [int][Math]::Floor($requiredChecks.Count / 2)
@@ -88,9 +92,10 @@ function New-MainRules {
             type = 'pull_request'
             parameters = [pscustomobject]@{
                 dismiss_stale_reviews_on_push = $false
-                require_last_push_approval = $true
+                require_last_push_approval = [bool]$WithApproval
                 required_review_thread_resolution = $false
-                required_approving_review_count = 1
+                required_approving_review_count =
+                    if ($WithApproval) { 1 } else { 0 }
             }
         },
         [pscustomobject]@{
@@ -112,7 +117,9 @@ function New-MainRules {
 
 function New-BranchProtection {
     param(
-        [switch] $WithBypass
+        [switch] $WithBypass,
+
+        [switch] $WithApproval
     )
 
     $bypassUsers =
@@ -126,8 +133,9 @@ function New-BranchProtection {
         enforce_admins = [pscustomobject]@{ enabled = $true }
         required_pull_request_reviews = [pscustomobject]@{
             dismiss_stale_reviews = $true
-            require_last_push_approval = $true
-            required_approving_review_count = 1
+            require_last_push_approval = [bool]$WithApproval
+            required_approving_review_count =
+                if ($WithApproval) { 1 } else { 0 }
             bypass_pull_request_allowances = [pscustomobject]@{
                 users = $bypassUsers
                 teams = @()
@@ -140,35 +148,63 @@ function New-BranchProtection {
     }
 }
 
-function New-TagRules {
-    param(
-        [Parameter(Mandatory = $true)]
-        [bool] $Active
-    )
-
-    $creationRulesetId =
-        if ($Active -and $global:ReleasePolicyTestTagRuleOverlap) {
-            [Int64]200
-        }
-        elseif ($Active) {
-            [Int64]100
-        }
-        else {
-            [Int64]300
-        }
-    $mutationRulesetId = if ($Active) { [Int64]200 } else { [Int64]300 }
+function New-TagRulesets {
+    $creationRules = @([pscustomobject]@{ type = 'creation' })
+    if ($global:ReleasePolicyTestTagRuleOverlap) {
+        $creationRules += [pscustomobject]@{ type = 'update' }
+    }
     return @(
         [pscustomobject]@{
-            type = 'creation'
-            ruleset_id = $creationRulesetId
+            id = [Int64]100
+            name = 'WireSockUI release tag creation'
+            target = 'tag'
+            source_type = 'Repository'
+            source = 'wiresock/WireSockUI'
+            enforcement = 'active'
+            conditions = [pscustomobject]@{
+                ref_name = [pscustomobject]@{
+                    include = @('refs/tags/release-v*.*.*')
+                    exclude = @()
+                }
+            }
+            rules = $creationRules
         },
         [pscustomobject]@{
-            type = 'update'
-            ruleset_id = $mutationRulesetId
+            id = [Int64]200
+            name = 'WireSockUI immutable release tags'
+            target = 'tag'
+            source_type = 'Repository'
+            source = 'wiresock/WireSockUI'
+            enforcement = 'active'
+            conditions = [pscustomobject]@{
+                ref_name = [pscustomobject]@{
+                    include = @('refs/tags/release-v*.*.*')
+                    exclude = @()
+                }
+            }
+            rules = @(
+                [pscustomobject]@{ type = 'update' },
+                [pscustomobject]@{ type = 'deletion' }
+            )
         },
         [pscustomobject]@{
-            type = 'deletion'
-            ruleset_id = $mutationRulesetId
+            id = [Int64]300
+            name = 'WireSockUI retired legacy tags'
+            target = 'tag'
+            source_type = 'Repository'
+            source = 'wiresock/WireSockUI'
+            enforcement = 'active'
+            conditions = [pscustomobject]@{
+                ref_name = [pscustomobject]@{
+                    include = @('refs/tags/v*')
+                    exclude = @()
+                }
+            }
+            rules = @(
+                [pscustomobject]@{ type = 'creation' },
+                [pscustomobject]@{ type = 'update' },
+                [pscustomobject]@{ type = 'deletion' }
+            )
         }
     )
 }
@@ -192,7 +228,10 @@ function global:Invoke-RestMethod {
         'https://api.github.com/repos/wiresock/WireSockUI' {
             return [pscustomobject]@{
                 full_name = 'wiresock/WireSockUI'
-                owner = [pscustomobject]@{ type = 'Organization' }
+                owner = [pscustomobject]@{
+                    login = 'wiresock'
+                    type = $global:ReleasePolicyTestOwnerType
+                }
                 default_branch = 'main'
             }
         }
@@ -234,36 +273,49 @@ function global:Invoke-RestMethod {
             return $global:ReleasePolicyTestBranchProtection
         }
         'https://api.github.com/repos/wiresock/WireSockUI/rules/branches/main?per_page=100&page=1' {
-            return $global:ReleasePolicyTestMainRules
+            Write-Output `
+                -NoEnumerate `
+                -InputObject $global:ReleasePolicyTestMainRules
+            return
         }
-        'https://api.github.com/repos/wiresock/WireSockUI/rules/tags/release-v1.2.3?per_page=100&page=1' {
-            return New-TagRules -Active $true
+        'https://api.github.com/repos/wiresock/WireSockUI/rulesets?per_page=100&page=1&includes_parents=true&targets=tag' {
+            $summaries = @(
+                New-TagRulesets |
+                    Select-Object id, name, target, source_type, source, enforcement
+            )
+            Write-Output -NoEnumerate -InputObject $summaries
+            return
         }
-        'https://api.github.com/repos/wiresock/WireSockUI/rules/tags/v1.2.3?per_page=100&page=1' {
-            return New-TagRules -Active $false
-        }
-        'https://api.github.com/repos/wiresock/WireSockUI/rules/tags/v0.0.0?per_page=100&page=1' {
-            return New-TagRules -Active $false
+        { $_ -cmatch '^https://api\.github\.com/repos/wiresock/WireSockUI/rulesets/(100|200|300)$' } {
+            $rulesetId = [Int64]($Uri -replace '^.*/', '')
+            return @(
+                New-TagRulesets |
+                    Where-Object { [Int64]$_.id -eq $rulesetId }
+            )[0]
         }
         'https://api.github.com/repos/wiresock/WireSockUI/environments/release-publish' {
+            $protectionRules = @(
+                [pscustomobject]@{ type = 'branch_policy' }
+            )
+            if ($global:ReleasePolicyTestEnvironmentHasReviewer) {
+                $protectionRules += [pscustomobject]@{
+                    type = 'required_reviewers'
+                    prevent_self_review = $true
+                    reviewers = @(
+                        [pscustomobject]@{
+                            type = 'User'
+                            reviewer = [pscustomobject]@{
+                                login = 'wiresock'
+                                slug = ''
+                            }
+                        }
+                    )
+                }
+            }
             return [pscustomobject]@{
                 name = 'release-publish'
-                can_admins_bypass = $false
-                protection_rules = @(
-                    [pscustomobject]@{
-                        type = 'required_reviewers'
-                        prevent_self_review = $true
-                        reviewers = @(
-                            [pscustomobject]@{
-                                type = 'Team'
-                                reviewer = [pscustomobject]@{
-                                    login = ''
-                                    slug = 'release-reviewers'
-                                }
-                            }
-                        )
-                    }
-                )
+                can_admins_bypass = $true
+                protection_rules = $protectionRules
                 deployment_branch_policy = [pscustomobject]@{
                     protected_branches = $false
                     custom_branch_policies = $true
@@ -301,13 +353,21 @@ function Invoke-PolicyFixture {
         [Parameter(Mandatory = $true)]
         [bool] $ShouldPass
         ,
-        [switch] $TagRuleOverlap
+        [switch] $TagRuleOverlap,
+
+        [ValidateSet('User', 'Organization')]
+        [string] $OwnerType = 'User',
+
+        [switch] $EnvironmentHasReviewer
     )
 
     $global:ReleasePolicyTestMainRules = $MainRules
     $global:ReleasePolicyTestBranchProtection = $BranchProtection
     $global:ReleasePolicyTestRequestCount = 0
     $global:ReleasePolicyTestTagRuleOverlap = [bool]$TagRuleOverlap
+    $global:ReleasePolicyTestOwnerType = $OwnerType
+    $global:ReleasePolicyTestEnvironmentHasReviewer =
+        [bool]$EnvironmentHasReviewer
     $failed = $false
     try {
         & $scriptUnderTest `
@@ -365,11 +425,28 @@ try {
         -BranchProtection (New-BranchProtection -WithBypass) `
         -ShouldPass $false
     Invoke-PolicyFixture `
+        -Name 'unsatisfiable-independent-approval' `
+        -MainRules (New-MainRules -WithApproval) `
+        -BranchProtection (New-BranchProtection -WithApproval) `
+        -ShouldPass $false
+    Invoke-PolicyFixture `
         -Name 'active-tag-ruleset-overlap' `
         -MainRules (New-MainRules) `
         -BranchProtection (New-BranchProtection) `
         -ShouldPass $false `
         -TagRuleOverlap
+    Invoke-PolicyFixture `
+        -Name 'organization-owner' `
+        -MainRules (New-MainRules) `
+        -BranchProtection (New-BranchProtection) `
+        -ShouldPass $false `
+        -OwnerType Organization
+    Invoke-PolicyFixture `
+        -Name 'personal-owner-environment-reviewer' `
+        -MainRules (New-MainRules) `
+        -BranchProtection (New-BranchProtection) `
+        -ShouldPass $false `
+        -EnvironmentHasReviewer
 }
 finally {
     if ($null -eq $previousToken) {
@@ -396,6 +473,16 @@ finally {
         -ErrorAction SilentlyContinue
     Remove-Variable `
         -Name ReleasePolicyTestTagRuleOverlap `
+        -Scope Global `
+        -Force `
+        -ErrorAction SilentlyContinue
+    Remove-Variable `
+        -Name ReleasePolicyTestOwnerType `
+        -Scope Global `
+        -Force `
+        -ErrorAction SilentlyContinue
+    Remove-Variable `
+        -Name ReleasePolicyTestEnvironmentHasReviewer `
         -Scope Global `
         -Force `
         -ErrorAction SilentlyContinue
