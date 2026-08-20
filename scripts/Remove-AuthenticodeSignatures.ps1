@@ -16,11 +16,54 @@ if (-not $root.PSIsContainer -or
     throw "Signature-removal root '$($root.FullName)' must be an ordinary directory."
 }
 
-$modules = @(
-    Get-ChildItem -LiteralPath $root.FullName -Recurse -File -Force |
-        Where-Object { $_.Extension -in @('.dll', '.exe') } |
-        Sort-Object FullName
-)
+function Test-HasMzHeader {
+    param(
+        [Parameter(Mandatory = $true)]
+        [IO.FileInfo] $File
+    )
+
+    $stream = [IO.File]::OpenRead($File.FullName)
+    try {
+        if ($stream.Length -lt 2) {
+            return $false
+        }
+
+        return $stream.ReadByte() -eq 0x4d -and
+            $stream.ReadByte() -eq 0x5a
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
+$maximumEntries = 4096
+$modules = [Collections.Generic.List[IO.FileInfo]]::new()
+$pendingDirectories = [Collections.Generic.Queue[IO.DirectoryInfo]]::new()
+$pendingDirectories.Enqueue([IO.DirectoryInfo]$root)
+$entryCount = 0
+
+while ($pendingDirectories.Count -gt 0) {
+    $directory = $pendingDirectories.Dequeue()
+    foreach ($child in @(Get-ChildItem -LiteralPath $directory.FullName -Force)) {
+        if (($child.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Signature-removal input '$($child.FullName)' must not contain reparse points."
+        }
+
+        $entryCount++
+        if ($entryCount -gt $maximumEntries) {
+            throw "Signature-removal input exceeds the $maximumEntries-entry limit."
+        }
+
+        if ($child.PSIsContainer) {
+            $pendingDirectories.Enqueue([IO.DirectoryInfo]$child)
+        }
+        elseif (Test-HasMzHeader -File ([IO.FileInfo]$child)) {
+            $modules.Add([IO.FileInfo]$child)
+        }
+    }
+}
+
+$modules = @($modules | Sort-Object FullName)
 if ($modules.Count -lt 1 -or $modules.Count -gt 4096) {
     throw "Signature-removal input contains $($modules.Count) modules; expected 1..4096."
 }
