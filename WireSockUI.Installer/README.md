@@ -75,7 +75,8 @@ active identities omitted by the complete six-package release matrix.
   contain a junction or hard-linked file before elevation. The launcher path is
   stable across versions and flavors for a given architecture. An
   x86-to-x64/ARM64 migration changes the physical path and must disable and
-  recreate path-bound per-user autorun and notification state.
+  recreate path-bound per-user autorun state. The installer-owned notification
+  AppUserModelID remains stable across architecture changes.
 - No executable custom action runs. Standard MSI 5 `MsiLockPermissionsEx`
   authoring establishes a protected owner/DACL on the new application directory
   and propagates it to installed descendants. SYSTEM and Administrators receive
@@ -88,7 +89,10 @@ active identities omitted by the complete six-package release matrix.
   maintenance. They are stable, non-advertised all-users shortcuts at
   `Common Programs\WireSock UI.lnk` and `Public Desktop\WireSock UI.lnk`, both
   target the stable native launcher, and both are removed on uninstall. Major
-  upgrades migrate the selected feature states.
+  upgrades migrate the selected feature states. The Start-menu shortcut owns
+  the stable AppUserModelID used by the UWP flavor for notifications. If that
+  feature is deselected, notifications remain disabled and the application
+  does not create a per-user replacement that could survive uninstall.
 - Major upgrades remove the previous product inside the MSI transaction before
   installing the new product. Files removed from later releases are therefore
   removed as product-owned files; rollback restores the prior package if the

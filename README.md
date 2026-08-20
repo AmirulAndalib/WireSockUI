@@ -27,7 +27,7 @@ Both flavors install the same desktop UI. The `uwp` flavor adds Windows notifica
 
 Starting with version `0.3.0`, WireSock UI releases are intentionally unsigned. Windows therefore displays **Unknown publisher** during installation. Verify the downloaded MSI against its published `.sha256` file when installing from a downloaded copy.
 
-The installer can add WireSock UI to the Start menu and create a desktop shortcut. Both options are selected by default.
+The installer can add WireSock UI to the Start menu and create a desktop shortcut. Both options are selected by default. The UWP flavor uses the installer-owned Start-menu shortcut to register Windows notifications; if you deselect that shortcut, notifications remain disabled and WireSock UI does not recreate it later.
 
 ### 3. Add and activate a tunnel
 
