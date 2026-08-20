@@ -305,7 +305,7 @@ namespace WireSockUI.Tests
                 { "WireSock manager retains handles when cleanup fails", WireSockManagerRetainsHandlesWhenCleanupFails },
                 { "WireSock manager retries release without dropping twice", WireSockManagerRetriesReleaseWithoutDroppingTwice },
                 { "WireSock manager quarantines dropped handles", WireSockManagerQuarantinesDroppedHandles },
-                { "WireSock manager rolls back failed log-level changes", WireSockManagerRollsBackFailedLogLevelChanges },
+                { "WireSock manager updates active log levels without reconnecting", WireSockManagerUpdatesActiveLogLevelsWithoutReconnect },
                 { "SDK smoke rejects unsafe integration profiles", SdkSmokeRejectsUnsafeIntegrationProfiles },
                 { "SDK smoke cleans up failed tunnel creation", SdkSmokeCleansUpFailedTunnelCreation },
                 { "SDK synthetic smoke permits an inactive TEST-NET tunnel", SdkSyntheticSmokePermitsInactiveTunnel },
@@ -6623,7 +6623,7 @@ namespace WireSockUI.Tests
             AssertEqual(0, buffer.Count);
         }
 
-        private static void WireSockManagerRollsBackFailedLogLevelChanges()
+        private static void WireSockManagerUpdatesActiveLogLevelsWithoutReconnect()
         {
             WithTemporaryConfigFolder(() =>
             {
@@ -6638,15 +6638,22 @@ namespace WireSockUI.Tests
                         manager.LogLevel = WireguardBoosterExports.WgbLogLevel.Info;
                         AssertTrue(manager.Connect("office"), "Expected the fake tunnel to connect.");
 
+                        var handleCount = nativeApi.GetHandleCount;
+                        manager.LogLevel = WireguardBoosterExports.WgbLogLevel.Debug;
+                        AssertEqual(1, nativeApi.SetLogLevelCount);
+                        AssertEqual(handleCount, nativeApi.GetHandleCount);
+                        AssertEqual(0, nativeApi.DropCount);
+                        AssertEqual((int)WireguardBoosterExports.WgbLogLevel.Debug, (int)manager.LogLevel);
+
                         nativeApi.SetLogLevelFailuresRemaining = 1;
                         AssertThrows<InvalidOperationException>(
-                            () => manager.LogLevel = WireguardBoosterExports.WgbLogLevel.Debug,
+                            () => manager.LogLevel = WireguardBoosterExports.WgbLogLevel.Info,
                             "Simulated set_log_level failure");
-                        AssertEqual((int)WireguardBoosterExports.WgbLogLevel.Info, (int)manager.LogLevel);
+                        AssertEqual((int)WireguardBoosterExports.WgbLogLevel.Debug, (int)manager.LogLevel);
 
                         AssertTrue(manager.Disconnect(), "Expected the fake tunnel to disconnect.");
                         AssertTrue(manager.Connect("office"), "Expected the fake tunnel to reconnect.");
-                        AssertEqual((int)WireguardBoosterExports.WgbLogLevel.Info,
+                        AssertEqual((int)WireguardBoosterExports.WgbLogLevel.Debug,
                             (int)nativeApi.LastCreateLogLevel);
                     }
                     finally

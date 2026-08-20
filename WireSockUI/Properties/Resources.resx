@@ -343,6 +343,9 @@
   <data name="ProfileEnumerationError" xml:space="preserve">
     <value>Unable to load profiles: {0}</value>
   </data>
+  <data name="ProfileSelectionPrompt" xml:space="preserve">
+    <value>Select or add a tunnel to view its details.</value>
+  </data>
   <data name="ProfileScriptWarningContinue" xml:space="preserve">
     <value>Do you want to continue?</value>
   </data>
