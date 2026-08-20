@@ -657,24 +657,46 @@ if ($null -eq $rootHasFilesProperty -and
 $expectedDependencyRelationships =
     [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 foreach ($lockedPackage in $expectedNuGetPackages.Values) {
-    $sourceId = $rootPackageId
-    if ($lockedPackage.Type -ceq 'Transitive') {
-        $sourceId =
-            [string]$dependencyPackagesByName[$lockedPackage.Name].SpdxId
-    }
-    elseif ($lockedPackage.Type -ceq 'Direct') {
-        $directTargetId =
-            [string]$dependencyPackagesByName[$lockedPackage.Name].SpdxId
+    $sourceId =
+        [string]$dependencyPackagesByName[$lockedPackage.Name].SpdxId
+    if ($lockedPackage.Type -ceq 'Direct') {
         [void](Add-RelationshipKey `
             -Relationships $expectedDependencyRelationships `
             -Source $rootPackageId `
             -Type 'DEPENDS_ON' `
-            -Target $directTargetId `
+            -Target $sourceId `
             -DuplicateMessage 'The NuGet lock implies a duplicate dependency relationship.')
-        $sourceId = $directTargetId
+        if ($expectedDependencyRelationships.Count -gt $maximumRelationships) {
+            throw 'The NuGet dependency closure exceeds the SPDX relationship limit.'
+        }
     }
 
+    # Microsoft.Sbom.DotNetTool emits the transitive closure for each NuGet
+    # package, while retaining only direct references from the root package.
+    # Reconstruct that exact closure so legitimate flattened relationships are
+    # accepted without permitting arbitrary or unlocked dependency edges.
+    $reachableDependencies =
+        [Collections.Generic.HashSet[string]]::new(
+            [StringComparer]::OrdinalIgnoreCase)
+    $dependencyQueue = [Collections.Generic.Queue[string]]::new()
     foreach ($dependencyName in $lockedPackage.Dependencies.Keys) {
+        $dependencyQueue.Enqueue($dependencyName)
+    }
+    while ($dependencyQueue.Count -gt 0) {
+        $dependencyName = $dependencyQueue.Dequeue()
+        if ($dependencyName -ceq $lockedPackage.Name) {
+            throw "The NuGet lock target contains a dependency cycle involving '$($lockedPackage.Name)'."
+        }
+        if (-not $reachableDependencies.Add($dependencyName)) {
+            continue
+        }
+        foreach ($transitiveDependencyName in
+            $expectedNuGetPackages[$dependencyName].Dependencies.Keys) {
+            $dependencyQueue.Enqueue($transitiveDependencyName)
+        }
+    }
+
+    foreach ($dependencyName in $reachableDependencies) {
         $dependencyTargetId =
             [string]$dependencyPackagesByName[$dependencyName].SpdxId
         [void](Add-RelationshipKey `
@@ -683,6 +705,9 @@ foreach ($lockedPackage in $expectedNuGetPackages.Values) {
             -Type 'DEPENDS_ON' `
             -Target $dependencyTargetId `
             -DuplicateMessage 'The NuGet lock implies a duplicate dependency relationship.')
+        if ($expectedDependencyRelationships.Count -gt $maximumRelationships) {
+            throw 'The NuGet dependency closure exceeds the SPDX relationship limit.'
+        }
     }
 }
 
