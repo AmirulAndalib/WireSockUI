@@ -617,11 +617,17 @@ try {
     $versionNtWindowsGateMsi = Invoke-MsiUpdate `
         -SourcePath $x86NoUwpPath `
         -Name 'version-nt-windows-gate' `
-        -Sql (
-            'UPDATE `LaunchCondition` SET `Condition` = ' +
-            '''Installed OR VersionNT >= 1000'' WHERE `Condition` = ' +
-            '''Installed OR VersionNT >= 603 OR ' +
-            '(VersionNT = 601 AND ServicePackLevel >= 1)''')
+        -Sql @(
+            (
+                'DELETE FROM `LaunchCondition` WHERE `Condition` = ' +
+                '''Installed OR VersionNT >= 603 OR ' +
+                '(VersionNT = 601 AND ServicePackLevel >= 1)'''
+            ),
+            (
+                'INSERT INTO `LaunchCondition` (`Condition`, `Description`) ' +
+                'VALUES (''Installed OR VersionNT >= 1000'', ' +
+                '''WireSock UI requires Windows 7 SP1, Windows 8.1, or later.'')'
+            ))
     Assert-PackageValidatorRejects `
         -Description 'An unsupported VersionNT Windows launch condition' `
         -Package $versionNtWindowsGateMsi `
