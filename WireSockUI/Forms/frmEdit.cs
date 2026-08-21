@@ -77,6 +77,8 @@ namespace WireSockUI.Forms
                     txtEditor.Text = SecureFileSystem.ReadAllText(profilePath, Profile.MaxProfileSizeBytes);
                 }
             }
+
+            UpdateDerivedPublicKey();
         }
 
         public string ReturnValue { get; private set; }
@@ -96,8 +98,67 @@ namespace WireSockUI.Forms
                 txtEditor.Text = txtEditor.Text
                     .Remove(m.Groups["value"].Index, m.Groups["value"].Length)
                     .Insert(m.Groups["value"].Index, base64PrivateKey);
-                txtPublicKey.Text = Convert.ToBase64String(Curve25519.GetPublicKey(newPrivateKey));
                 return;
+            }
+        }
+
+        internal void UpdateDerivedPublicKey()
+        {
+            txtPublicKey.Text = DeriveInterfacePublicKey(txtEditor.Text) ?? string.Empty;
+        }
+
+        internal static string DeriveInterfacePublicKey(string profileText)
+        {
+            if (string.IsNullOrEmpty(profileText))
+                return null;
+
+            string currentSection = null;
+            string privateKey = null;
+            foreach (Match match in ProfileMatch.Matches(profileText))
+            {
+                if (match.Groups["section"].Success)
+                {
+                    var sectionToken = match.Groups["section"].Value;
+                    currentSection = sectionToken.Substring(1, sectionToken.Length - 2).Trim();
+
+                    // The SDK resets a repeated section, so only the final canonical
+                    // Interface section contributes the displayed derived key.
+                    if (string.Equals(currentSection, "Interface", StringComparison.Ordinal))
+                        privateKey = null;
+                    continue;
+                }
+
+                if (!string.Equals(currentSection, "Interface", StringComparison.Ordinal) ||
+                    !match.Groups["key"].Success ||
+                    !string.Equals(match.Groups["key"].Value, "PrivateKey",
+                        StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                privateKey = match.Groups["value"].Success
+                    ? match.Groups["value"].Value
+                    : null;
+            }
+
+            if (string.IsNullOrWhiteSpace(privateKey))
+                return null;
+
+            byte[] binaryKey = null;
+            try
+            {
+                binaryKey = Convert.FromBase64String(privateKey);
+                if (binaryKey.Length != 32)
+                    return null;
+
+                return Convert.ToBase64String(Curve25519.GetPublicKey(binaryKey));
+            }
+            catch (FormatException)
+            {
+                return null;
+            }
+            finally
+            {
+                if (binaryKey != null)
+                    Array.Clear(binaryKey, 0, binaryKey.Length);
             }
         }
 
@@ -227,7 +288,6 @@ namespace WireSockUI.Forms
                                     {
                                         if (string.IsNullOrEmpty(value))
                                         {
-                                            txtPublicKey.Text = string.Empty;
                                             txtEditor.UnderlineSelection();
                                             hasErrors = true;
                                         }
@@ -238,8 +298,6 @@ namespace WireSockUI.Forms
                                                 var binaryKey = Convert.FromBase64String(value);
                                                 if (binaryKey.Length != 32)
                                                     throw new FormatException();
-
-                                                txtPublicKey.Text = Convert.ToBase64String(Curve25519.GetPublicKey(binaryKey));
                                             }
                                             catch (FormatException)
                                             {
@@ -598,6 +656,7 @@ namespace WireSockUI.Forms
             if (_highlightTimer != null)
                 _highlightTimer.Stop();
 
+            UpdateDerivedPublicKey();
             ApplySyntaxHighlighting();
             // Profile construction below is the authoritative SDK-compatible validation
             // boundary and produces the error shown to the user.
@@ -626,6 +685,7 @@ namespace WireSockUI.Forms
         private void OnHighlightTimerTick(object sender, EventArgs e)
         {
             _highlightTimer.Stop();
+            UpdateDerivedPublicKey();
             ApplySyntaxHighlighting();
         }
 

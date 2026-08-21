@@ -262,6 +262,7 @@ namespace WireSockUI.Tests
                 { "Curve25519 matches RFC 7748 public-key vectors", Curve25519MatchesRfc7748PublicKeyVectors },
                 { "Curve25519 supports optional signing keys", Curve25519SupportsOptionalSigningKeys },
                 { "Editor validates Amnezia options", EditorValidatesAmneziaOptions },
+                { "Editor derives the interface public key independently of highlighting", EditorDerivesInterfacePublicKeyIndependentlyOfHighlighting },
                 { "Image lists clone icons before delayed handle creation", ImageListsCloneIconsBeforeDelayedHandleCreation },
                 { "WinForms dialogs initialize and dispose on an STA thread", WinFormsDialogsInitializeAndDisposeOnStaThread },
                 { "WinForms dialogs use readable responsive layouts", WinFormsDialogsUseReadableResponsiveLayouts },
@@ -4402,6 +4403,36 @@ namespace WireSockUI.Tests
                 "Expected oversized profiles not to be reformatted synchronously on the UI thread.");
             AssertFalse(FrmEdit.ShouldApplySyntaxHighlighting(-1),
                 "Expected invalid text lengths not to enter syntax highlighting.");
+        }
+
+        private static void EditorDerivesInterfacePublicKeyIndependentlyOfHighlighting()
+        {
+            var expectedPublicKey = Convert.ToBase64String(
+                Curve25519.GetPublicKey(Convert.FromBase64String(PrivateKey)));
+            AssertEqual(expectedPublicKey, FrmEdit.DeriveInterfacePublicKey(
+                $"[Interface]\nPrivateKey = {PrivateKey}\n[Peer]\nPublicKey = {PublicKey}\n"));
+            AssertTrue(FrmEdit.DeriveInterfacePublicKey(
+                    "[Interface]\nPrivateKey = invalid\n") == null,
+                "Expected an invalid private key to clear the derived public key.");
+            AssertTrue(FrmEdit.DeriveInterfacePublicKey(
+                    $"[Interface]\nPrivateKey = {PrivateKey}\n[Interface]\nAddress = 10.0.0.1/32\n") == null,
+                "Expected a repeated Interface section without a private key to clear the earlier value.");
+
+            using (var editor = new FrmEdit())
+            {
+                var editorText = GetRequiredPrivateControl<RichTextBox>(editor, "txtEditor");
+                var derivedPublicKey = GetRequiredPrivateControl<TextBox>(editor, "txtPublicKey");
+                AssertTrue(!string.IsNullOrWhiteSpace(derivedPublicKey.Text),
+                    "Expected a new profile to display its generated public key immediately.");
+
+                editorText.Text = $"[Interface]\nPrivateKey = {PrivateKey}\n";
+                editor.UpdateDerivedPublicKey();
+                AssertEqual(expectedPublicKey, derivedPublicKey.Text);
+
+                editorText.Text = "[Interface]\nPrivateKey = invalid\n";
+                editor.UpdateDerivedPublicKey();
+                AssertEqual(string.Empty, derivedPublicKey.Text);
+            }
         }
 
         private static void MainWindowPresentationRendersRecoveryConsistently()
