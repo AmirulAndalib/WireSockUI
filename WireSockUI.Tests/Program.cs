@@ -236,6 +236,7 @@ namespace WireSockUI.Tests
                 { "UI log buffering coalesces and bounds dispatch", UiLogBufferingCoalescesAndBoundsDispatch },
                 { "UI log presentation filters noisy native records", UiLogPresentationFiltersNoisyNativeRecords },
                 { "Visible log storage overwrites without unbounded growth", VisibleLogStorageOverwritesWithoutGrowth },
+                { "Virtual log list invalidates after item-count transitions", VirtualLogListInvalidatesAfterItemCountTransitions },
                 { "Diagnostic logging redacts credentials", DiagnosticLoggingRedactsCredentials },
                 { "Diagnostic logging bounds oversized records", DiagnosticLoggingBoundsOversizedRecords },
                 { "Native query distinguishes error sentinels", NativeQueryDistinguishesErrorSentinels },
@@ -6821,6 +6822,38 @@ namespace WireSockUI.Tests
 
             buffer.Clear();
             AssertEqual(0, buffer.Count);
+        }
+
+        private static void VirtualLogListInvalidatesAfterItemCountTransitions()
+        {
+            using (var logList = new ListView
+            {
+                VirtualMode = true,
+                View = View.Details
+            })
+            {
+                logList.Columns.Add("Time");
+                logList.Columns.Add("Message");
+                logList.RetrieveVirtualItem += (sender, args) =>
+                    args.Item = new ListViewItem(new[] { args.ItemIndex.ToString(), "message" });
+
+                GC.KeepAlive(logList.Handle);
+                var invalidationCount = 0;
+                logList.Invalidated += (sender, args) => invalidationCount++;
+
+                FrmMain.SynchronizeVirtualLogList(logList, 3, false);
+                AssertEqual(3, logList.VirtualListSize);
+                AssertTrue(invalidationCount > 0,
+                    "Expected the empty-to-populated virtual log transition to invalidate the native list.");
+
+                invalidationCount = 0;
+                FrmMain.SynchronizeVirtualLogList(logList, 3, false);
+                AssertTrue(invalidationCount > 0,
+                    "Expected new backing records to invalidate the virtual list even when its size is unchanged.");
+
+                FrmMain.SynchronizeVirtualLogList(logList, 0, false);
+                AssertEqual(0, logList.VirtualListSize);
+            }
         }
 
         private static void WireSockManagerUpdatesActiveLogLevelsWithoutReconnect()
