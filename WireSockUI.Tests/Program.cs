@@ -4756,6 +4756,35 @@ namespace WireSockUI.Tests
                 $"Expected a desktop notification file URI, got '{uri}'.");
             AssertTrue(uri.Contains("WireSock%20UI"), "Expected spaces in notification image paths to be escaped.");
             AssertThrows<ArgumentException>(() => NotificationContent.BuildLocalImageUri(" "), "path");
+
+            var windows81Toast = XDocument.Parse(NotificationContent.BuildToastXml(
+                "Tunnel active",
+                "Connected",
+                path,
+                "WireSock UI",
+                new Version(6, 3)));
+            var windows81Binding = windows81Toast.Descendants("binding").Single();
+            AssertEqual("ToastImageAndText02", (string)windows81Binding.Attribute("template"));
+            AssertTrue(windows81Binding.Elements("text").Select(element => (string)element.Attribute("id"))
+                    .SequenceEqual(new[] { "1", "2" }),
+                "Expected the Windows 8.1 toast to use numbered text elements.");
+            AssertFalse(windows81Binding.Descendants("image").Attributes("placement").Any(),
+                "Windows 8.1 toast XML must not contain the Windows 10 app-logo placement attribute.");
+
+            var windows10Toast = XDocument.Parse(NotificationContent.BuildToastXml(
+                "Tunnel active",
+                "Connected",
+                path,
+                "WireSock UI",
+                new Version(10, 0)));
+            var windows10Binding = windows10Toast.Descendants("binding").Single();
+            AssertEqual("ToastGeneric", (string)windows10Binding.Attribute("template"));
+            AssertTrue(windows10Binding.Descendants("image").Any(element =>
+                    string.Equals((string)element.Attribute("placement"), "appLogoOverride",
+                        StringComparison.Ordinal)),
+                "Expected the Windows 10 toast to use adaptive app-logo placement.");
+            AssertThrows<ArgumentNullException>(() => NotificationContent.BuildToastXml(
+                "Tunnel active", "Connected", path, "WireSock UI", null), "windowsVersion");
         }
 
         private static void WindowsCompatibilityManifestEnablesModernBehavior()
@@ -4763,11 +4792,23 @@ namespace WireSockUI.Tests
             var manifest =
                 XDocument.Load(FindRepositoryFile("WireSockUI.Bootstrap", "bootstrap.manifest"));
             var elements = manifest.Descendants().ToArray();
-            AssertTrue(elements.Any(element => element.Name.LocalName == "supportedOS" &&
-                                               string.Equals((string)element.Attribute("Id"),
-                                                   "{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}",
-                                                   StringComparison.OrdinalIgnoreCase)),
-                "Expected the Windows 10/11 compatibility declaration to be enabled.");
+            var expectedSupportedOsIds = new[]
+            {
+                "{35138b9a-5d96-4fbd-8e2d-a2440225f93a}", // Windows 7
+                "{1f676c76-80e1-4239-95bb-83d0f6d0da78}", // Windows 8.1
+                "{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"  // Windows 10/11
+            };
+            var supportedOsElements = elements
+                .Where(element => element.Name.LocalName == "supportedOS")
+                .ToArray();
+            AssertEqual(expectedSupportedOsIds.Length, supportedOsElements.Length);
+            foreach (var expectedSupportedOsId in expectedSupportedOsIds)
+            {
+                AssertTrue(supportedOsElements.Any(element =>
+                        string.Equals((string)element.Attribute("Id"), expectedSupportedOsId,
+                            StringComparison.OrdinalIgnoreCase)),
+                    $"Expected compatibility declaration {expectedSupportedOsId} to be enabled.");
+            }
             AssertTrue(elements.Any(element => element.Name.LocalName == "dpiAwareness" &&
                                                element.Value.Contains("PerMonitorV2")),
                 "Expected PerMonitorV2 DPI awareness to be enabled.");

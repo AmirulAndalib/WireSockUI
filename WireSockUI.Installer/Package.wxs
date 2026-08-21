@@ -41,25 +41,20 @@
           Bitness="always32" />
     </Property>
     <!--
-      VersionNT and WindowsBuild inherit the compatibility view of msiexec.exe.
-      Current Windows Installer binaries can therefore report Windows 8.1 even
-      on Windows 10/11 and Windows Server 2025. Read the real OS build
-      number instead; 10240 is the first released Windows 10 build. The
-      documented 32-bit registry view also keeps x86 packages compatible with
-      supported 32-bit Windows installations.
+      .NET Framework 4.7.2 supports Windows 7 SP1 and Windows 8.1, but not
+      Windows 8. VersionNT is 601, 602, and 603 respectively; modern Windows
+      Installer compatibility views report at least 603. Keep Installed as an
+      escape hatch for maintenance and uninstall.
     -->
-    <Property Id="WINDOWSCURRENTBUILD" Secure="yes">
-      <RegistrySearch
-          Id="WindowsCurrentBuildSearch"
-          Root="HKLM"
-          Key="SOFTWARE\Microsoft\Windows NT\CurrentVersion"
-          Name="CurrentBuildNumber"
-          Type="raw"
-          Bitness="always32" />
-    </Property>
-    <Launch
-        Condition="Installed OR WINDOWSCURRENTBUILD &gt;= 10240"
-        Message="WireSock UI requires Windows 10 or later." />
+    <?if $(var.ProductFlavor) = uwp ?>
+      <Launch
+          Condition="Installed OR VersionNT &gt;= 603"
+          Message="WireSock UI UWP requires Windows 8.1 or later." />
+    <?else?>
+      <Launch
+          Condition="Installed OR VersionNT &gt;= 603 OR (VersionNT = 601 AND ServicePackLevel &gt;= 1)"
+          Message="WireSock UI requires Windows 7 SP1, Windows 8.1, or later." />
+    <?endif?>
     <?if $(var.ProductArchitecture) = arm64 ?>
       <!-- .NET Framework did not gain native ARM64 CLR support until 4.8.1. -->
       <Launch

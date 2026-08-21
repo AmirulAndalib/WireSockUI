@@ -67,8 +67,8 @@ Keep WireSockUI and the official WireSock Secure Connect CLI/SDK current when ad
 
 | Package | Intended platform | Difference |
 | --- | --- | --- |
-| `win-x64-uwp` / `win-x86-uwp` | Windows 10 and 11 | Recommended on modern Intel/AMD systems; includes notifications and update checks. |
-| `win-x64-no-uwp` / `win-x86-no-uwp` | **Windows 7 or later** | The non-UWP version is intended to support Windows 7 and omits Windows Runtime integrations. |
+| `win-x64-uwp` / `win-x86-uwp` | **Windows 8.1 or later** | Includes notifications and update checks through Windows Runtime integrations. |
+| `win-x64-no-uwp` / `win-x86-no-uwp` | **Windows 7 SP1 or Windows 8.1 and later** | Supports Windows 7 SP1 and omits Windows Runtime integrations. |
 | `win-arm64-uwp` / `win-arm64-no-uwp` | Windows 11 on Arm | Native ARM64 builds; the UWP variant adds notifications and update checks. |
 
 All variants use the same core tunnel and configuration functionality. Requirements:
@@ -79,6 +79,8 @@ All variants use the same core tunnel and configuration functionality. Requireme
 - installation from the official MSI into its protected Program Files location.
 
 Portable copies and loose publish directories are not supported.
+
+Windows 8 is not supported because its final compatible runtime is .NET Framework 4.6.1, while WireSockUI targets .NET Framework 4.7.2.
 
 ## Installation
 
