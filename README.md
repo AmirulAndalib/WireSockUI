@@ -152,6 +152,6 @@ See [WireSockUI.Installer/README.md](WireSockUI.Installer/README.md) for install
 
 ## License and affiliation
 
-WireSockUI is copyright &copy; 2023 WireSock Foundation and distributed under the [MIT License](LICENSE).
+WireSockUI is copyright &copy; 2023&ndash;2026 WireSock Foundation and distributed under the [MIT License](LICENSE).
 
 The interface is intentionally similar in spirit to the simple, classic workflow of WireGuard for Windows. **WireSockUI is not affiliated with, endorsed by, or maintained by Jason A. Donenfeld or the WireGuard project.** References to WireGuard describe configuration compatibility and interface inspiration only; no official association is implied.

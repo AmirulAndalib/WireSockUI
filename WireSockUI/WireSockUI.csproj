@@ -47,7 +47,7 @@
     <FileVersion>$(Version)</FileVersion>
     <InformationalVersion>$(Version)</InformationalVersion>
     <Product>WireSock UI</Product>
-    <Copyright>Copyright %A9 2023</Copyright>
+    <Copyright>Copyright %A9 2023-2026</Copyright>
     <NativeBootstrapDevelopmentArgument Condition="$(Configuration.StartsWith('Debug'))">-DevelopmentBuild</NativeBootstrapDevelopmentArgument>
   </PropertyGroup>
 
