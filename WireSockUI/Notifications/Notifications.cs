@@ -5,7 +5,6 @@ using System.IO;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Windows.Forms;
-using System.Xml.Linq;
 using Windows.Data.Xml.Dom;
 using Windows.UI.Notifications;
 using WireSockUI.Native;
@@ -224,21 +223,13 @@ namespace WireSockUI.Notifications
 
         private static XmlDocument GetXml(string title, string body, string icon)
         {
-            var toast =
-                new XElement("toast",
-                    new XElement("visual",
-                        new XElement("binding",
-                            new XAttribute("template", "ToastGeneric"),
-                            new XElement("text", title),
-                            new XElement("text", body),
-                            new XElement("image",
-                                new XAttribute("src", NotificationContent.BuildLocalImageUri(icon)),
-                                new XAttribute("alt", Resources.FormMain),
-                                new XAttribute("placement", "appLogoOverride"),
-                                new XAttribute("hint-crop", "circle")))));
-
             var xml = new XmlDocument();
-            xml.LoadXml(toast.ToString());
+            xml.LoadXml(NotificationContent.BuildToastXml(
+                title,
+                body,
+                icon,
+                Resources.FormMain,
+                Environment.OSVersion.Version));
 
             return xml;
         }

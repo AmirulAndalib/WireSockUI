@@ -53,8 +53,15 @@ function Set-ComProperty {
         $Arguments) | Out-Null
 }
 
-function Assert-WindowsBuildLaunchConditionSemantics {
-    param([Parameter(Mandatory = $true)][string]$Package)
+function Assert-WindowsLaunchConditionSemantics {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Package,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('no-uwp', 'uwp')]
+        [string]$Flavor
+    )
 
     $installer = $null
     $session = $null
@@ -70,22 +77,41 @@ function Assert-WindowsBuildLaunchConditionSemantics {
             OpenPackage `
             @([string]$Package, [int]1)
         Set-ComProperty $session Property @('Installed', '')
-        Set-ComProperty $session Property @('VersionNT', '603')
         Set-ComProperty `
             $session `
             Property `
             @('NETFRAMEWORK472RELEASE', '#533325')
 
-        $condition = 'Installed OR WINDOWSCURRENTBUILD >= 10240'
-        foreach ($testCase in @(
-                [pscustomobject]@{ Build = ''; Expected = 0 }
-                [pscustomobject]@{ Build = '9600'; Expected = 0 }
-                [pscustomobject]@{ Build = '10240'; Expected = 1 }
-                [pscustomobject]@{ Build = '26100'; Expected = 1 })) {
+        if ($Flavor -eq 'uwp') {
+            $condition = 'Installed OR VersionNT >= 603'
+            $testCases = @(
+                [pscustomobject]@{ Version = ''; ServicePack = ''; Expected = 0 }
+                [pscustomobject]@{ Version = 601; ServicePack = 1; Expected = 0 }
+                [pscustomobject]@{ Version = 602; ServicePack = 0; Expected = 0 }
+                [pscustomobject]@{ Version = 603; ServicePack = 0; Expected = 1 }
+            )
+        }
+        else {
+            $condition =
+                'Installed OR VersionNT >= 603 OR ' +
+                '(VersionNT = 601 AND ServicePackLevel >= 1)'
+            $testCases = @(
+                [pscustomobject]@{ Version = ''; ServicePack = ''; Expected = 0 }
+                [pscustomobject]@{ Version = 601; ServicePack = 0; Expected = 0 }
+                [pscustomobject]@{ Version = 601; ServicePack = 1; Expected = 1 }
+                [pscustomobject]@{ Version = 602; ServicePack = 0; Expected = 0 }
+                [pscustomobject]@{ Version = 603; ServicePack = 0; Expected = 1 }
+            )
+        }
+        foreach ($testCase in $testCases) {
             Set-ComProperty `
                 $session `
                 Property `
-                @('WINDOWSCURRENTBUILD', $testCase.Build)
+                @('VersionNT', [string]$testCase.Version)
+            Set-ComProperty `
+                $session `
+                Property `
+                @('ServicePackLevel', [string]$testCase.ServicePack)
             $evaluation = [int](
                 Invoke-ComMethod `
                     $session `
@@ -93,16 +119,15 @@ function Assert-WindowsBuildLaunchConditionSemantics {
                     @([string]$condition))
             if ($evaluation -ne $testCase.Expected) {
                 throw (
-                    "Windows build launch condition evaluated build " +
-                    "'$($testCase.Build)' as $evaluation; expected " +
+                    "$Flavor Windows launch condition evaluated VersionNT " +
+                    "'$($testCase.Version)' and ServicePackLevel " +
+                    "'$($testCase.ServicePack)' as $evaluation; expected " +
                     "$($testCase.Expected).")
             }
         }
 
-        # Server 2025 currently exposes VersionNT=603 to msiexec.exe. A real
-        # build 26100 must still pass the package's complete LaunchConditions
-        # action when all unrelated requirements are satisfied.
-        Set-ComProperty $session Property @('WINDOWSCURRENTBUILD', '9600')
+        Set-ComProperty $session Property @('VersionNT', '602')
+        Set-ComProperty $session Property @('ServicePackLevel', '0')
         $rejectedActionStatus = [int](
             Invoke-ComMethod $session DoAction @('LaunchConditions'))
         if ($rejectedActionStatus -ne 3) {
@@ -111,7 +136,14 @@ function Assert-WindowsBuildLaunchConditionSemantics {
                 "$rejectedActionStatus; expected 3.")
         }
 
-        Set-ComProperty $session Property @('WINDOWSCURRENTBUILD', '26100')
+        if ($Flavor -eq 'uwp') {
+            Set-ComProperty $session Property @('VersionNT', '603')
+            Set-ComProperty $session Property @('ServicePackLevel', '0')
+        }
+        else {
+            Set-ComProperty $session Property @('VersionNT', '601')
+            Set-ComProperty $session Property @('ServicePackLevel', '1')
+        }
         $actionStatus = [int](
             Invoke-ComMethod $session DoAction @('LaunchConditions'))
         if ($actionStatus -ne 1) {
@@ -120,8 +152,8 @@ function Assert-WindowsBuildLaunchConditionSemantics {
     }
     catch {
         throw (
-            'The MSI Windows-build launch condition does not tolerate the ' +
-            "modern msiexec VersionNT compatibility view: $($_.Exception.Message)")
+            "The $Flavor MSI Windows launch condition has incorrect " +
+            "VersionNT/ServicePackLevel semantics: $($_.Exception.Message)")
     }
     finally {
         if ($null -ne $session) {
@@ -548,7 +580,24 @@ try {
     }
     $x86NoUwpVersion = [string]$Matches.version
 
-    Assert-WindowsBuildLaunchConditionSemantics -Package $x86NoUwpPath
+    $x86UwpMatches = @(
+        $resolvedMsiPaths |
+            Where-Object {
+                [IO.Path]::GetFileName($_) -cmatch
+                    '^WireSockUI-[0-9]+\.[0-9]+\.[0-9]+-win-x86-uwp\.msi$'
+            }
+    )
+    if ($x86UwpMatches.Count -ne 1) {
+        throw 'The test requires exactly one canonically named x86/uwp MSI.'
+    }
+    $x86UwpPath = $x86UwpMatches[0]
+
+    Assert-WindowsLaunchConditionSemantics `
+        -Package $x86NoUwpPath `
+        -Flavor 'no-uwp'
+    Assert-WindowsLaunchConditionSemantics `
+        -Package $x86UwpPath `
+        -Flavor 'uwp'
 
     $always64FrameworkSearchMsi = Invoke-MsiUpdate `
         -SourcePath $x86NoUwpPath `
@@ -565,36 +614,16 @@ try {
         -ExpectedVersion $x86NoUwpVersion `
         -ExpectedMessage 'documented 32-bit .NET Framework release key'
 
-    $always64WindowsBuildSearchMsi = Invoke-MsiUpdate `
-        -SourcePath $x86NoUwpPath `
-        -Name 'always64-windows-build-search' `
-        -Sql (
-            'UPDATE `RegLocator` SET `Type` = 18 WHERE `Signature_` = ' +
-            '''WindowsCurrentBuildSearch''')
-    Assert-PackageValidatorRejects `
-        -Description 'An x86 package with a 64-bit-only Windows build registry locator' `
-        -Package $always64WindowsBuildSearchMsi `
-        -ValidationMetadataPath ($x86NoUwpPath + '.validation.json') `
-        -ExpectedArchitecture 'x86' `
-        -ExpectedFlavor 'no-uwp' `
-        -ExpectedVersion $x86NoUwpVersion `
-        -ExpectedMessage 'documented 32-bit-compatible Windows build number key'
-
     $versionNtWindowsGateMsi = Invoke-MsiUpdate `
         -SourcePath $x86NoUwpPath `
         -Name 'version-nt-windows-gate' `
-        -Sql @(
-            (
-                'DELETE FROM `LaunchCondition` WHERE `Condition` = ' +
-                '''Installed OR WINDOWSCURRENTBUILD >= 10240'''
-            ),
-            (
-                'INSERT INTO `LaunchCondition` (`Condition`, `Description`) ' +
-                'VALUES (''Installed OR VersionNT >= 1000'', ' +
-                '''WireSock UI requires Windows 10 or later.'')'
-            ))
+        -Sql (
+            'UPDATE `LaunchCondition` SET `Condition` = ' +
+            '''Installed OR VersionNT >= 1000'' WHERE `Condition` = ' +
+            '''Installed OR VersionNT >= 603 OR ' +
+            '(VersionNT = 601 AND ServicePackLevel >= 1)''')
     Assert-PackageValidatorRejects `
-        -Description 'A compatibility-lied VersionNT Windows launch condition' `
+        -Description 'An unsupported VersionNT Windows launch condition' `
         -Package $versionNtWindowsGateMsi `
         -ValidationMetadataPath ($x86NoUwpPath + '.validation.json') `
         -ExpectedArchitecture 'x86' `
