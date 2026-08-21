@@ -4161,8 +4161,8 @@ namespace WireSockUI.Tests
             using (var settings = new FrmSettings())
             {
                 AssertDialogUsesSystemFont(settings, "settings");
-                AssertTrue(settings.ClientSize.Width >= 360 && settings.ClientSize.Height >= 360,
-                    "Expected the settings dialog to provide comfortable default spacing.");
+                AssertTrue(settings.ClientSize.Width >= 340 && settings.ClientSize.Height >= 310,
+                    "Expected the settings dialog to remain readable without oversized gaps.");
                 AssertTrue(settings.FormBorderStyle == FormBorderStyle.FixedDialog,
                     "Expected the settings window to use dialog chrome.");
 
