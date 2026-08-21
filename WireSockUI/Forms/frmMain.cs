@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Threading;
@@ -79,6 +80,11 @@ namespace WireSockUI.Forms
         public FrmMain()
         {
             InitializeComponent();
+            Text = BuildWindowTitle(
+                Resources.FormMain,
+                typeof(FrmMain).Assembly
+                    .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+                    ?.InformationalVersion);
             ConfigureMainWindowLayout();
 
             lstLog.RetrieveVirtualItem += OnRetrieveVirtualLogItem;
@@ -129,6 +135,22 @@ namespace WireSockUI.Forms
 
             // Update the list of available configurations.
             LoadProfiles();
+        }
+
+        internal static string BuildWindowTitle(string productName, string informationalVersion)
+        {
+            var title = string.IsNullOrWhiteSpace(productName) ? "WireSock UI" : productName.Trim();
+            if (string.IsNullOrWhiteSpace(informationalVersion))
+                return title;
+
+            var metadataSeparator = informationalVersion.IndexOf('+');
+            var displayVersion = (metadataSeparator >= 0
+                    ? informationalVersion.Substring(0, metadataSeparator)
+                    : informationalVersion)
+                .Trim();
+            return string.IsNullOrWhiteSpace(displayVersion)
+                ? title
+                : $"{title} {displayVersion}";
         }
 
         private void ConfigureMainWindowLayout()
@@ -3118,10 +3140,6 @@ namespace WireSockUI.Forms
                 updating = true;
                 _visibleLogMessages.AddRange(logMessages);
                 var currentCount = _visibleLogMessages.Count;
-                if (lstLog.VirtualListSize != currentCount)
-                    lstLog.VirtualListSize = currentCount;
-                else
-                    lstLog.Invalidate();
                 btnClearLog.Enabled = currentCount > 0;
                 latestLogIndex = currentCount - 1;
             }
@@ -3149,15 +3167,17 @@ namespace WireSockUI.Forms
             }
 
             if (latestLogIndex >= 0)
+            {
+                TrySynchronizeVirtualLogList(_visibleLogMessages.Count, lstLog.Visible);
                 ScrollLogToLatest(latestLogIndex);
+            }
         }
 
         private void OnClearLogClick(object sender, EventArgs e)
         {
             _uiLogBuffer.Clear();
             _visibleLogMessages.Clear();
-            lstLog.VirtualListSize = 0;
-            lstLog.Invalidate();
+            TrySynchronizeVirtualLogList(0, lstLog.Visible);
             btnClearLog.Enabled = false;
         }
 
@@ -3168,8 +3188,73 @@ namespace WireSockUI.Forms
             // cannot remain visible after a tab switch.
             tabControl.Refresh();
 
-            if (tabControl.SelectedTab == tabPageLog && _visibleLogMessages.Count > 0)
-                ScrollLogToLatest(_visibleLogMessages.Count - 1);
+            if (tabControl.SelectedTab == tabPageLog)
+                ScheduleVisibleLogRefresh();
+        }
+
+        private void ScheduleVisibleLogRefresh()
+        {
+            if (_shutdownComplete || IsDisposed || Disposing || !IsHandleCreated)
+                return;
+
+            try
+            {
+                // SelectedIndexChanged can run before the new tab page and its
+                // native children are visible. Repaint on the next UI turn so a
+                // zero-to-nonzero virtual-list transition cannot remain blank.
+                BeginInvoke((Action)(() =>
+                {
+                    if (_shutdownComplete || IsDisposed || Disposing || tabControl.SelectedTab != tabPageLog)
+                        return;
+
+                    var currentCount = _visibleLogMessages.Count;
+                    TrySynchronizeVirtualLogList(currentCount, true);
+                    btnClearLog.Enabled = currentCount > 0;
+                    if (currentCount > 0)
+                        ScrollLogToLatest(currentCount - 1);
+                }));
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            catch (InvalidOperationException)
+            {
+            }
+        }
+
+        private void TrySynchronizeVirtualLogList(int itemCount, bool repaintImmediately)
+        {
+            try
+            {
+                SynchronizeVirtualLogList(lstLog, itemCount, repaintImmediately);
+            }
+            catch (ObjectDisposedException)
+            {
+                // Late native log callbacks can arrive while the form is shutting down.
+            }
+            catch (InvalidOperationException)
+            {
+                // The logging ListView can be in handle destruction during shutdown.
+            }
+        }
+
+        internal static void SynchronizeVirtualLogList(ListView logList, int itemCount,
+            bool repaintImmediately)
+        {
+            if (logList == null)
+                throw new ArgumentNullException(nameof(logList));
+            if (itemCount < 0)
+                throw new ArgumentOutOfRangeException(nameof(itemCount));
+
+            if (logList.VirtualListSize != itemCount)
+                logList.VirtualListSize = itemCount;
+
+            // VirtualListSize updates the native item count, but it does not
+            // reliably repaint a virtual ListView that has just transitioned
+            // from empty while its tab was changing visibility.
+            logList.Invalidate();
+            if (repaintImmediately && logList.IsHandleCreated && logList.Visible)
+                logList.Update();
         }
 
         private void ScrollLogToLatest(int latestLogIndex)

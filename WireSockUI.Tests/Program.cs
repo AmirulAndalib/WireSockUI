@@ -236,6 +236,7 @@ namespace WireSockUI.Tests
                 { "UI log buffering coalesces and bounds dispatch", UiLogBufferingCoalescesAndBoundsDispatch },
                 { "UI log presentation filters noisy native records", UiLogPresentationFiltersNoisyNativeRecords },
                 { "Visible log storage overwrites without unbounded growth", VisibleLogStorageOverwritesWithoutGrowth },
+                { "Virtual log list invalidates after item-count transitions", VirtualLogListInvalidatesAfterItemCountTransitions },
                 { "Diagnostic logging redacts credentials", DiagnosticLoggingRedactsCredentials },
                 { "Diagnostic logging bounds oversized records", DiagnosticLoggingBoundsOversizedRecords },
                 { "Native query distinguishes error sentinels", NativeQueryDistinguishesErrorSentinels },
@@ -262,8 +263,10 @@ namespace WireSockUI.Tests
                 { "Curve25519 matches RFC 7748 public-key vectors", Curve25519MatchesRfc7748PublicKeyVectors },
                 { "Curve25519 supports optional signing keys", Curve25519SupportsOptionalSigningKeys },
                 { "Editor validates Amnezia options", EditorValidatesAmneziaOptions },
+                { "Editor derives the interface public key independently of highlighting", EditorDerivesInterfacePublicKeyIndependentlyOfHighlighting },
                 { "Image lists clone icons before delayed handle creation", ImageListsCloneIconsBeforeDelayedHandleCreation },
                 { "WinForms dialogs initialize and dispose on an STA thread", WinFormsDialogsInitializeAndDisposeOnStaThread },
+                { "WinForms dialogs use readable responsive layouts", WinFormsDialogsUseReadableResponsiveLayouts },
                 { "Main window action rows remain visible after scaling", MainWindowActionRowsRemainVisibleAfterScaling },
                 { "Settings copies the secured profiles path without shell activation", SettingsCopiesSecuredProfilesPathWithoutShellActivation },
                 { "Editor bounds synchronous syntax highlighting", EditorBoundsSynchronousSyntaxHighlighting },
@@ -285,6 +288,7 @@ namespace WireSockUI.Tests
                 { "Autorun validates the complete task definition", AutoRunValidatesCompleteTaskDefinition },
                 { "Process picker preserves executable match names", ProcessPickerPreservesExecutableMatchNames },
                 { "Process snapshots are cached serialized and SID based", ProcessSnapshotsAreCachedSerializedAndSidBased },
+                { "Process picker loads executable icons and main title shows version", ProcessPickerLoadsExecutableIconsAndMainTitleShowsVersion },
                 { "WireSock disconnect forwards network-lock preservation", WireSockDisconnectForwardsNetworkLockPreservation },
                 { "Lifecycle resets a preserved lock after handle creation fails", LifecycleResetsPreservedLockAfterHandleCreationFails },
                 { "Lifecycle monitor defers queries during a slow native connect", LifecycleMonitorDefersQueriesDuringSlowNativeConnect },
@@ -4155,6 +4159,146 @@ namespace WireSockUI.Tests
                 "Expected process-filter timer resources to be released.");
         }
 
+        private static void WinFormsDialogsUseReadableResponsiveLayouts()
+        {
+            using (var settings = new FrmSettings())
+            {
+                AssertDialogUsesSystemFont(settings, "settings");
+                AssertTrue(settings.ClientSize.Width >= 340 && settings.ClientSize.Height >= 310,
+                    "Expected the settings dialog to remain readable without oversized gaps.");
+                AssertTrue(settings.FormBorderStyle == FormBorderStyle.FixedDialog,
+                    "Expected the settings window to use dialog chrome.");
+
+                var save = GetRequiredPrivateControl<Button>(settings, "btnSave");
+                var copy = GetRequiredPrivateControl<Button>(settings, "btnCopyProfilesFolderPath");
+                var killSwitch = GetRequiredPrivateControl<CheckBox>(settings, "chkEnableKillSwitch");
+                var logLevel = GetRequiredPrivateControl<ComboBox>(settings, "ddlLogLevel");
+                settings.PerformLayout();
+                AssertControlFits(settings, killSwitch, "settings Kill Switch");
+                AssertControlFits(settings, logLevel, "settings log level");
+                AssertControlFits(settings, save, "settings Save action");
+                AssertControlFits(settings, copy, "settings profiles-folder action");
+                AssertTrue(save.Height >= 30 && copy.Height >= 30,
+                    "Expected settings actions to have a comfortable click target.");
+
+                settings.Scale(new SizeF(1.5F, 1.5F));
+                settings.PerformLayout();
+                AssertControlFits(settings, killSwitch, "scaled settings Kill Switch");
+                AssertControlFits(settings, logLevel, "scaled settings log level");
+                AssertControlFits(settings, save, "scaled settings Save action");
+                AssertControlFits(settings, copy, "scaled settings profiles-folder action");
+            }
+
+            using (var editor = new FrmEdit())
+            {
+                AssertDialogUsesSystemFont(editor, "profile editor");
+                AssertTrue(editor.FormBorderStyle == FormBorderStyle.Sizable,
+                    "Expected the profile editor to be resizable.");
+                AssertTrue(editor.MaximizeBox, "Expected the profile editor to support maximizing.");
+                AssertTrue(editor.MinimumSize.Width >= 700 && editor.MinimumSize.Height >= 500,
+                    "Expected the profile editor to retain a readable minimum size.");
+
+                var editorText = GetRequiredPrivateControl<RichTextBox>(editor, "txtEditor");
+                var bottom = GetRequiredPrivateControl<Panel>(editor, "pnlBottom");
+                var save = GetRequiredPrivateControl<Button>(editor, "btnSave");
+                var cancel = GetRequiredPrivateControl<Button>(editor, "btnCancel");
+                AssertTrue(string.Equals(editorText.Font.Name, "Consolas", StringComparison.OrdinalIgnoreCase) &&
+                           editorText.Font.SizeInPoints >= 10F,
+                    "Expected a readable modern monospace editor font.");
+
+                var originalEditorSize = editorText.ClientSize;
+                editor.ClientSize = new Size(editor.ClientSize.Width + 180, editor.ClientSize.Height + 120);
+                editor.PerformLayout();
+                AssertTrue(editorText.ClientSize.Width > originalEditorSize.Width &&
+                           editorText.ClientSize.Height > originalEditorSize.Height,
+                    "Expected the profile editor content to grow with the dialog.");
+                AssertControlFits(editor, bottom, "profile editor action row");
+                AssertControlFits(bottom, save, "profile editor Save action");
+                AssertControlFits(bottom, cancel, "profile editor Cancel action");
+
+                editor.Scale(new SizeF(1.5F, 1.5F));
+                editor.PerformLayout();
+                AssertControlFits(editor, bottom, "scaled profile editor action row");
+                AssertControlFits(bottom, save, "scaled profile editor Save action");
+                AssertControlFits(bottom, cancel, "scaled profile editor Cancel action");
+            }
+
+            using (var taskManager = new TaskManager())
+            {
+                AssertDialogUsesSystemFont(taskManager, "process picker");
+                AssertTrue(taskManager.FormBorderStyle == FormBorderStyle.Sizable,
+                    "Expected the process picker to be resizable.");
+                AssertTrue(taskManager.MaximizeBox, "Expected the process picker to support maximizing.");
+                AssertTrue(taskManager.MinimumSize.Width >= 400 && taskManager.MinimumSize.Height >= 380,
+                    "Expected the process picker to retain a readable minimum size.");
+
+                var processList = GetRequiredPrivateControl<ListView>(taskManager, "lstProcesses");
+                var filters = GetRequiredPrivateControl<Panel>(taskManager, "pnlFilters");
+                var search = GetRequiredPrivateControl<TextBox>(taskManager, "txtSearch");
+                var refresh = GetRequiredPrivateControl<Button>(taskManager, "btnRefresh");
+                var originalListSize = processList.ClientSize;
+                var originalSearchWidth = search.Width;
+                taskManager.ClientSize = new Size(
+                    taskManager.ClientSize.Width + 180,
+                    taskManager.ClientSize.Height + 120);
+                taskManager.PerformLayout();
+                filters.PerformLayout();
+
+                AssertTrue(processList.ClientSize.Width > originalListSize.Width &&
+                           processList.ClientSize.Height > originalListSize.Height,
+                    "Expected the process list to grow with the dialog.");
+                AssertTrue(search.Width > originalSearchWidth,
+                    "Expected the process search field to grow with the dialog.");
+                AssertControlFits(taskManager, processList, "process list");
+                AssertControlFits(taskManager, filters, "process filter row");
+                AssertControlFits(filters, search, "process search field");
+                AssertControlFits(filters, refresh, "process refresh action");
+                AssertTrue(processList.Bottom <= filters.Top,
+                    "Expected the process list to remain above the filter row.");
+                AssertTrue(processList.Columns[0].Width <= processList.ClientSize.Width &&
+                           processList.Columns[0].Width >= processList.ClientSize.Width - 8,
+                    "Expected the process column to follow the resizable viewport.");
+
+                taskManager.Scale(new SizeF(1.5F, 1.5F));
+                taskManager.PerformLayout();
+                filters.PerformLayout();
+                AssertControlFits(taskManager, processList, "scaled process list");
+                AssertControlFits(taskManager, filters, "scaled process filter row");
+                AssertControlFits(filters, search, "scaled process search field");
+                AssertControlFits(filters, refresh, "scaled process refresh action");
+                AssertTrue(processList.Bottom <= filters.Top,
+                    "Expected the scaled process list to remain above the filter row.");
+            }
+        }
+
+        private static T GetRequiredPrivateControl<T>(object owner, string fieldName) where T : Control
+        {
+            var control = owner.GetType()
+                .GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic)
+                ?.GetValue(owner) as T;
+            if (control == null)
+                throw new InvalidOperationException(
+                    $"The '{fieldName}' control was not found on {owner.GetType().Name}.");
+            return control;
+        }
+
+        private static void AssertDialogUsesSystemFont(Form dialog, string description)
+        {
+            AssertTrue(
+                string.Equals(dialog.Font.Name, SystemFonts.MessageBoxFont.Name,
+                    StringComparison.OrdinalIgnoreCase) &&
+                dialog.Font.SizeInPoints >= SystemFonts.MessageBoxFont.SizeInPoints,
+                $"Expected the {description} dialog to use the Windows message font.");
+        }
+
+        private static void AssertControlFits(Control parent, Control child, string description)
+        {
+            AssertTrue(child.Left >= 0 && child.Top >= 0 &&
+                       child.Right <= parent.ClientSize.Width &&
+                       child.Bottom <= parent.ClientSize.Height,
+                $"Expected {description} to remain inside its parent bounds.");
+        }
+
         private static void MainWindowActionRowsRemainVisibleAfterScaling()
         {
             using (var layout = new TableLayoutPanel
@@ -4260,6 +4404,36 @@ namespace WireSockUI.Tests
                 "Expected oversized profiles not to be reformatted synchronously on the UI thread.");
             AssertFalse(FrmEdit.ShouldApplySyntaxHighlighting(-1),
                 "Expected invalid text lengths not to enter syntax highlighting.");
+        }
+
+        private static void EditorDerivesInterfacePublicKeyIndependentlyOfHighlighting()
+        {
+            var expectedPublicKey = Convert.ToBase64String(
+                Curve25519.GetPublicKey(Convert.FromBase64String(PrivateKey)));
+            AssertEqual(expectedPublicKey, FrmEdit.DeriveInterfacePublicKey(
+                $"[Interface]\nPrivateKey = {PrivateKey}\n[Peer]\nPublicKey = {PublicKey}\n"));
+            AssertTrue(FrmEdit.DeriveInterfacePublicKey(
+                    "[Interface]\nPrivateKey = invalid\n") == null,
+                "Expected an invalid private key to clear the derived public key.");
+            AssertTrue(FrmEdit.DeriveInterfacePublicKey(
+                    $"[Interface]\nPrivateKey = {PrivateKey}\n[Interface]\nAddress = 10.0.0.1/32\n") == null,
+                "Expected a repeated Interface section without a private key to clear the earlier value.");
+
+            using (var editor = new FrmEdit())
+            {
+                var editorText = GetRequiredPrivateControl<RichTextBox>(editor, "txtEditor");
+                var derivedPublicKey = GetRequiredPrivateControl<TextBox>(editor, "txtPublicKey");
+                AssertTrue(!string.IsNullOrWhiteSpace(derivedPublicKey.Text),
+                    "Expected a new profile to display its generated public key immediately.");
+
+                editorText.Text = $"[Interface]\nPrivateKey = {PrivateKey}\n";
+                editor.UpdateDerivedPublicKey();
+                AssertEqual(expectedPublicKey, derivedPublicKey.Text);
+
+                editorText.Text = "[Interface]\nPrivateKey = invalid\n";
+                editor.UpdateDerivedPublicKey();
+                AssertEqual(string.Empty, derivedPublicKey.Text);
+            }
         }
 
         private static void MainWindowPresentationRendersRecoveryConsistently()
@@ -6650,6 +6824,38 @@ namespace WireSockUI.Tests
             AssertEqual(0, buffer.Count);
         }
 
+        private static void VirtualLogListInvalidatesAfterItemCountTransitions()
+        {
+            using (var logList = new ListView
+            {
+                VirtualMode = true,
+                View = View.Details
+            })
+            {
+                logList.Columns.Add("Time");
+                logList.Columns.Add("Message");
+                logList.RetrieveVirtualItem += (sender, args) =>
+                    args.Item = new ListViewItem(new[] { args.ItemIndex.ToString(), "message" });
+
+                GC.KeepAlive(logList.Handle);
+                var invalidationCount = 0;
+                logList.Invalidated += (sender, args) => invalidationCount++;
+
+                FrmMain.SynchronizeVirtualLogList(logList, 3, false);
+                AssertEqual(3, logList.VirtualListSize);
+                AssertTrue(invalidationCount > 0,
+                    "Expected the empty-to-populated virtual log transition to invalidate the native list.");
+
+                invalidationCount = 0;
+                FrmMain.SynchronizeVirtualLogList(logList, 3, false);
+                AssertTrue(invalidationCount > 0,
+                    "Expected new backing records to invalidate the virtual list even when its size is unchanged.");
+
+                FrmMain.SynchronizeVirtualLogList(logList, 0, false);
+                AssertEqual(0, logList.VirtualListSize);
+            }
+        }
+
         private static void WireSockManagerUpdatesActiveLogLevelsWithoutReconnect()
         {
             WithTemporaryConfigFolder(() =>
@@ -7896,6 +8102,28 @@ namespace WireSockUI.Tests
                 new ProcessEntry(2, "wireguard", null, "user")));
             AssertTrue(TaskManager.GetProcessMatchName(null) == null,
                 "Expected an unavailable process entry not to create an application rule.");
+        }
+
+        private static void ProcessPickerLoadsExecutableIconsAndMainTitleShowsVersion()
+        {
+            string currentProcessPath;
+            using (var currentProcess = Process.GetCurrentProcess())
+                currentProcessPath = currentProcess.MainModule?.FileName;
+
+            AssertTrue(!string.IsNullOrWhiteSpace(currentProcessPath) && File.Exists(currentProcessPath),
+                "Expected the test process executable path to be available.");
+            using (var processIcon = TaskManager.TryExtractProcessIcon(currentProcessPath))
+            {
+                AssertTrue(processIcon != null,
+                    "Expected the process picker to extract the executable's associated icon.");
+            }
+
+            AssertTrue(TaskManager.TryExtractProcessIcon(@"C:\missing\process.exe") == null,
+                "Expected a missing process image to use the fallback icon.");
+            AssertEqual("WireSock UI 0.3.8",
+                FrmMain.BuildWindowTitle("WireSock UI", "0.3.8+build-metadata"));
+            AssertEqual("WireSock UI",
+                FrmMain.BuildWindowTitle("WireSock UI", null));
         }
 
         private static void AutoRunValidatesCompleteTaskDefinition()
