@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Threading;
@@ -79,6 +80,11 @@ namespace WireSockUI.Forms
         public FrmMain()
         {
             InitializeComponent();
+            Text = BuildWindowTitle(
+                Resources.FormMain,
+                typeof(FrmMain).Assembly
+                    .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+                    ?.InformationalVersion);
             ConfigureMainWindowLayout();
 
             lstLog.RetrieveVirtualItem += OnRetrieveVirtualLogItem;
@@ -129,6 +135,22 @@ namespace WireSockUI.Forms
 
             // Update the list of available configurations.
             LoadProfiles();
+        }
+
+        internal static string BuildWindowTitle(string productName, string informationalVersion)
+        {
+            var title = string.IsNullOrWhiteSpace(productName) ? "WireSock UI" : productName.Trim();
+            if (string.IsNullOrWhiteSpace(informationalVersion))
+                return title;
+
+            var metadataSeparator = informationalVersion.IndexOf('+');
+            var displayVersion = (metadataSeparator >= 0
+                    ? informationalVersion.Substring(0, metadataSeparator)
+                    : informationalVersion)
+                .Trim();
+            return string.IsNullOrWhiteSpace(displayVersion)
+                ? title
+                : $"{title} {displayVersion}";
         }
 
         private void ConfigureMainWindowLayout()

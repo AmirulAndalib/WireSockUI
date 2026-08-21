@@ -286,6 +286,7 @@ namespace WireSockUI.Tests
                 { "Autorun validates the complete task definition", AutoRunValidatesCompleteTaskDefinition },
                 { "Process picker preserves executable match names", ProcessPickerPreservesExecutableMatchNames },
                 { "Process snapshots are cached serialized and SID based", ProcessSnapshotsAreCachedSerializedAndSidBased },
+                { "Process picker loads executable icons and main title shows version", ProcessPickerLoadsExecutableIconsAndMainTitleShowsVersion },
                 { "WireSock disconnect forwards network-lock preservation", WireSockDisconnectForwardsNetworkLockPreservation },
                 { "Lifecycle resets a preserved lock after handle creation fails", LifecycleResetsPreservedLockAfterHandleCreationFails },
                 { "Lifecycle monitor defers queries during a slow native connect", LifecycleMonitorDefersQueriesDuringSlowNativeConnect },
@@ -8037,6 +8038,28 @@ namespace WireSockUI.Tests
                 new ProcessEntry(2, "wireguard", null, "user")));
             AssertTrue(TaskManager.GetProcessMatchName(null) == null,
                 "Expected an unavailable process entry not to create an application rule.");
+        }
+
+        private static void ProcessPickerLoadsExecutableIconsAndMainTitleShowsVersion()
+        {
+            string currentProcessPath;
+            using (var currentProcess = Process.GetCurrentProcess())
+                currentProcessPath = currentProcess.MainModule?.FileName;
+
+            AssertTrue(!string.IsNullOrWhiteSpace(currentProcessPath) && File.Exists(currentProcessPath),
+                "Expected the test process executable path to be available.");
+            using (var processIcon = TaskManager.TryExtractProcessIcon(currentProcessPath))
+            {
+                AssertTrue(processIcon != null,
+                    "Expected the process picker to extract the executable's associated icon.");
+            }
+
+            AssertTrue(TaskManager.TryExtractProcessIcon(@"C:\missing\process.exe") == null,
+                "Expected a missing process image to use the fallback icon.");
+            AssertEqual("WireSock UI 0.3.8",
+                FrmMain.BuildWindowTitle("WireSock UI", "0.3.8+build-metadata"));
+            AssertEqual("WireSock UI",
+                FrmMain.BuildWindowTitle("WireSock UI", null));
         }
 
         private static void AutoRunValidatesCompleteTaskDefinition()

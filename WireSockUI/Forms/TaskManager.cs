@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
+using System.Security;
 using System.Security.Principal;
 using System.Threading;
 using System.Threading.Tasks;
@@ -29,11 +31,21 @@ namespace WireSockUI.Forms
         {
             public string DisplayName { get; set; }
             public string MatchName { get; set; }
+            public Icon ProcessIcon { get; set; }
         }
 
-        private sealed class ProcessRefreshResult
+        private sealed class ProcessRefreshResult : IDisposable
         {
             public List<ProcessDisplayEntry> Entries { get; } = new List<ProcessDisplayEntry>();
+
+            public void Dispose()
+            {
+                foreach (var entry in Entries)
+                {
+                    entry.ProcessIcon?.Dispose();
+                    entry.ProcessIcon = null;
+                }
+            }
         }
 
         public TaskManager()
@@ -141,6 +153,8 @@ namespace WireSockUI.Forms
             }
             finally
             {
+                result?.Dispose();
+
                 if (ReferenceEquals(_refreshCancellation, refreshCancellation))
                 {
                     _refreshCancellation = null;
@@ -163,31 +177,62 @@ namespace WireSockUI.Forms
             CancellationToken cancellationToken)
         {
             var result = new ProcessRefreshResult();
-            var processes = (processSnapshot ?? Enumerable.Empty<ProcessEntry>())
-                .Where(p => ShouldIncludeProcessForUser(p, hideOtherUsers, currentUserSid))
-                .Distinct(ProcessEntry.Comparer);
-
-            foreach (var process in processes)
+            try
             {
-                cancellationToken.ThrowIfCancellationRequested();
+                var processes = (processSnapshot ?? Enumerable.Empty<ProcessEntry>())
+                    .Where(p => ShouldIncludeProcessForUser(p, hideOtherUsers, currentUserSid))
+                    .Distinct(ProcessEntry.Comparer);
 
-                var displayName = !string.IsNullOrWhiteSpace(process.ImageName)
-                    ? Path.GetFileNameWithoutExtension(process.ImageName)
-                    : Path.GetFileNameWithoutExtension(process.Name);
-                if (string.IsNullOrWhiteSpace(displayName))
-                    displayName = process.Name;
-                var matchName = GetProcessMatchName(process);
-                if (string.IsNullOrWhiteSpace(matchName))
-                    continue;
-
-                result.Entries.Add(new ProcessDisplayEntry
+                foreach (var process in processes)
                 {
-                    DisplayName = displayName,
-                    MatchName = matchName
-                });
-            }
+                    cancellationToken.ThrowIfCancellationRequested();
 
-            return result;
+                    var displayName = !string.IsNullOrWhiteSpace(process.ImageName)
+                        ? Path.GetFileNameWithoutExtension(process.ImageName)
+                        : Path.GetFileNameWithoutExtension(process.Name);
+                    if (string.IsNullOrWhiteSpace(displayName))
+                        displayName = process.Name;
+                    var matchName = GetProcessMatchName(process);
+                    if (string.IsNullOrWhiteSpace(matchName))
+                        continue;
+
+                    result.Entries.Add(new ProcessDisplayEntry
+                    {
+                        DisplayName = displayName,
+                        MatchName = matchName,
+                        ProcessIcon = TryExtractProcessIcon(process.ImageName)
+                    });
+                }
+
+                return result;
+            }
+            catch
+            {
+                result.Dispose();
+                throw;
+            }
+        }
+
+        internal static Icon TryExtractProcessIcon(string imagePath)
+        {
+            if (string.IsNullOrWhiteSpace(imagePath) || !Path.IsPathRooted(imagePath) || !File.Exists(imagePath))
+                return null;
+
+            try
+            {
+                return Icon.ExtractAssociatedIcon(imagePath);
+            }
+            catch (Exception ex) when (ex is ArgumentException ||
+                                       ex is IOException ||
+                                       ex is UnauthorizedAccessException ||
+                                       ex is NotSupportedException ||
+                                       ex is ExternalException ||
+                                       ex is SecurityException)
+            {
+                System.Diagnostics.Trace.TraceWarning(
+                    $"Unable to load the icon for process image '{Path.GetFileName(imagePath)}': {ex.Message}");
+                return null;
+            }
         }
 
         private void ApplyProcessRefreshResult(ProcessRefreshResult result)
@@ -200,10 +245,19 @@ namespace WireSockUI.Forms
             if (defaultIcon != null)
                 lstProcesses.SmallImageList.Images.AddClonedIcon(defaultIconKey, defaultIcon);
 
+            var processIconIndex = 0;
             foreach (var process in result.Entries)
             {
-                var listViewItem = new ListViewItem(process.DisplayName, defaultIconKey)
-                { Tag = process.MatchName };
+                var imageKey = defaultIcon != null ? defaultIconKey : null;
+                if (process.ProcessIcon != null)
+                {
+                    imageKey = $"ProcessIcon{processIconIndex++}";
+                    lstProcesses.SmallImageList.Images.AddClonedIcon(imageKey, process.ProcessIcon);
+                }
+
+                var listViewItem = new ListViewItem(process.DisplayName) { Tag = process.MatchName };
+                if (!string.IsNullOrEmpty(imageKey))
+                    listViewItem.ImageKey = imageKey;
                 _cachedProcessListItems.Add(listViewItem);
             }
 
